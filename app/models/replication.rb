@@ -4,12 +4,14 @@ class Replication
   attr_accessor :dest_mission, :parent_assoc, :in_transaction,
     :current_assoc, :ancestors, :deep_copy,
     :recursed, :src_obj, :dest_obj,
+    :export_results,
     :mode, # there are three modes
            # * clone:      make a copy of the object and its decendents.
            #               the mission for the clones is the same as the original objects mission.
            # * to_mission: make a copy of the object and its decendents under a different mission.
            #               requires an additional parameter: :to_mission
            # * promote:    take an mission based object and clones it as a standard object
+           # * export:     object is intended for export (as json) and will not be replicated
     :retain_link_on_promote  # when in promote mode, do we link the original object to the new standard object?
                              # if so, a coordinator will be unable to modify the object as it is no long a mission based object.
 
@@ -86,7 +88,9 @@ class Replication
       :ancestors => ancestors + [dest_obj],
 
       # recursed always is true since we're recursing here
-      :recursed => true
+      :recursed => true,
+
+      :export_results => export_results
     )
   end
 

@@ -1,7 +1,6 @@
 # methods that handle replicating changes to copies of core objects (forms, questions, etc.) within and across missions
 module Replicable
   extend ActiveSupport::Concern
-
   JOIN_CLASSES = %w(Optioning Questioning Condition)
 
   # an initial list of attributes that we don't want to copy from the src_obj to the dest_obj
@@ -44,7 +43,10 @@ module Replicable
     end
   end
 
-  # TOM: this comment will need to be rewritten. please include a list of all the available options.
+  def export_mode?(options)
+    (options.is_a?(Replication) && options.mode == :export) || (options.respond_to?("[]") && options[:mode] && options[:mode] == :export)
+  end
+
   # creates a duplicate in this or another mission
   # accepts the mission to which to replicate (when called from outside)
   # or a Replication object, which holds the params for the replication operation
@@ -54,8 +56,12 @@ module Replicable
   # replicate(:mode => :clone)
   # replicate(:mode => :to_mission, :mission => m)
   # replicate(:mode => :promote, :retain_link_on_promote => false)
+  #
+  # Invalid Option:
+  # replicate(:mode => :export)    replication makes another copy of the object, export does not
   def replicate(options = nil)
     raise ArgumentError, 'Replication mode has not been defined' unless options.is_a?(Replication) || (options.respond_to?("[]") && options[:mode])
+    raise ArgumentError, 'Export mode is not valid during replication' if export_mode?(options)
 
     # if mission or nil was passed in, we don't have a replication object, so we need to create one
     # a replication is an object to track replication parameters
@@ -233,6 +239,104 @@ module Replicable
     @src_obj.save!
   end
 
+
+
+
+  # export object and relationships as json
+  def json_for_export(replication)
+    ## if mission or nil was passed in, we don't have a replication object, so we need to create one
+    ## a replication is an object to track replication parameters
+    #if to_mission_or_replication.is_a?(Replication)
+      #replication = to_mission_or_replication
+    #else
+      #replication = Replication.new(:src_obj => self, :to_mission => to_mission_or_replication)
+    #end
+
+
+  ##################################################################################################
+  # Export Mode Section
+  ##################################################################################################
+
+  # export object and relationships as json
+  def json_for_export(options=nil)
+    if options.is_a?(Replication)
+      replication = options
+    else
+      replication = Replication.new(:mode => :export, :src_obj => self)
+    end
+
+    generate_json_for_export(replication)
+
+    replication.export_results
+  end
+
+  # generate json for current object and export child associations
+  def generate_json_for_export(replication)
+    skip = skip_attributes_for_export(replication)
+    results = self.as_json(:root => true, :except => skip.keys)
+    replication.export_results ||= []
+    replication.export_results << results
+
+    export_child_associations(replication)
+  end
+
+  # gets a list of attributes that should NOT be exported
+  def skip_attributes_for_export(replication)
+    # get the names of attribs NOT to copy from replication
+    skip = attribs_not_to_replicate(replication)
+
+    # undo skip for id and associations as we keep these during export
+    skip.delete("id")
+    skip.delete("#{replicable_opts(:parent_assoc)}_id") if replicable_opts(:parent_assoc)
+    if replicable_opts(:child_assocs)
+      replicable_opts(:child_assocs).each do |ca|
+        skip.delete("#{ca}_id")
+      end
+    end
+
+    skip
+  end
+
+  # exports all child associations
+  def export_child_associations(replication)
+    # loop over each assoc and call appropriate method
+    replicable_opts(:child_assocs).each do |assoc|
+      if self.class.reflect_on_association(assoc).collection?
+        export_collection_association(assoc, replication)
+      else
+        export_non_collection_association(assoc, replication)
+      end
+    end
+  end
+
+  # exports a collection-type association
+  def export_collection_association(assoc_name, replication)
+    # export the existing children
+    send(assoc_name).each{|o| export_child(o, assoc_name, replication)}
+  end
+
+  # exports a non-collection-type association (e.g. belongs_to)
+  def export_non_collection_association(assoc_name, replication)
+    if send(assoc_name)
+      export_child(send(assoc_name), assoc_name, replication)
+    end
+  end
+
+  # calls export on an individual child object, generating a new set of replication params
+  # for this particular export call
+  def export_child(child, assoc_name, replication)
+    # build new replication param obj for child
+    new_replication = replication.clone_for_recursion(child, assoc_name)
+
+    # call export for the child object
+    child.generate_json_for_export(new_replication)
+  end
+
+
+
+
+
+
   #############################################################################
   private
   #############################################################################
@@ -257,11 +361,7 @@ module Replicable
 
     # replicates the appropriate attributes from the src to the dest
     def replicate_attributes(replication)
-      # get the names of attribs NOT to copy
       skip = attribs_not_to_replicate(replication)
-
-      # hashify the list to avoid n^2 runtime
-      skip = Hash[*skip.map{|a| [a,1]}.flatten]
 
       # do the copy
       attributes.each{|k,v| replicate_attribute(k, v, replication, skip)}
@@ -321,36 +421,40 @@ module Replicable
       # 2. dest obj attrib value has NOT deviated from std
       # therefore, if either of the above conditions is met, we should NOT add the attrib to the dont_copy list
       # in all other cases, we should add it to the dont_copy list
-      replicable_opts(:user_modifiable).each do |attrib|
+      if replication.mode != :export
+        replicable_opts(:user_modifiable).each do |attrib|
 
-        # if we are creating, immediately we know that nothing gets added to dont_copy
-        # otherwise, we need to check if value has deviated in dest obj
-        unless replication.creating?
+          # if we are creating, immediately we know that nothing gets added to dont_copy
+          # otherwise, we need to check if value has deviated in dest obj
+          unless replication.creating?
 
-          # if the src attrib is or was a hash, it gets special treatment
-          if send(attrib).is_a?(Hash) || send("#{attrib}_was").is_a?(Hash)
+            # if the src attrib is or was a hash, it gets special treatment
+            if send(attrib).is_a?(Hash) || send("#{attrib}_was").is_a?(Hash)
 
-            # get refs, ensuring no nils
-            src_hash = send(attrib) || {}
-            src_hash_was = send("#{attrib}_was") || {}
-            dest_hash = replication.dest_obj.send(attrib) || {}
+              # get refs, ensuring no nils
+              src_hash = send(attrib) || {}
+              src_hash_was = send("#{attrib}_was") || {}
+              dest_hash = replication.dest_obj.send(attrib) || {}
 
-            # loop over each key in src
-            src_hash_was.each_key do |k|
-              # don't copy this particular key if deviated
-              dont_copy << "#{attrib}.#{k}" if src_hash_was[k] != dest_hash[k]
+              # loop over each key in src
+              src_hash_was.each_key do |k|
+                # don't copy this particular key if deviated
+                dont_copy << "#{attrib}.#{k}" if src_hash_was[k] != dest_hash[k]
+              end
+            else
+              # figure out if the attribute has deviated
+              deviated = send("#{attrib}_was") != replication.dest_obj.send(attrib)
+
+              # don't copy if value has deviated
+              dont_copy << attrib if deviated
             end
-          else
-            # figure out if the attribute has deviated
-            deviated = send("#{attrib}_was") != replication.dest_obj.send(attrib)
-
-            # don't copy if value has deviated
-            dont_copy << attrib if deviated
           end
         end
       end
 
-      dont_copy
+
+      # hashify the list to avoid n^2 runtime
+      Hash[*dont_copy.map{|a| [a,1]}.flatten]
     end
 
     # ensures the uniqueness replicable option is respected

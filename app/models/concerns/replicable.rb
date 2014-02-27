@@ -233,7 +233,9 @@ module Replicable
     @src_obj.save!
   end
 
+  #############################################################################
   private
+  #############################################################################
 
     # gets the object to which the replication operation will copy attributes, etc.
     # may be a new object or an existing one depending on parameters

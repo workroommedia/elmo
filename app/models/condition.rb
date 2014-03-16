@@ -131,7 +131,12 @@ class Condition < ActiveRecord::Base
   def as_json(options = {})
     fields = %w(questioning_id ref_qing_id op value option_id)
     fields += %w(refable_qing_types refable_qing_option_lists operators) if options[:dropdown_values]
-    Hash[*fields.map{|k| [k, send(k)]}.flatten(1)]
+    result = Hash[*fields.map{|k| [k, send(k)]}.flatten(1)]
+    if options[:root]
+      root = !!options[:root] == options[:root] ? "root" : options[:root] # if options[:root] is Boolean, use "root".
+      result = {root => result} if options[:root]
+    end
+    result
   end
 
   private

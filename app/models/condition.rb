@@ -133,7 +133,7 @@ class Condition < ActiveRecord::Base
     fields += %w(refable_qing_types refable_qing_option_lists operators) if options[:dropdown_values]
     result = Hash[*fields.map{|k| [k, send(k)]}.flatten(1)]
     if options[:root]
-      root = !!options[:root] == options[:root] ? "root" : options[:root] # if options[:root] is Boolean, use "root".
+      root = !!options[:root] == options[:root] ? "condition" : options[:root] # if options[:root] is Boolean, use "root".
       result = {root => result} if options[:root]
     end
     result

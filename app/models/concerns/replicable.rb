@@ -243,14 +243,24 @@ module Replicable
 
 
   # export object and relationships as json
-  def json_for_export(replication)
-    ## if mission or nil was passed in, we don't have a replication object, so we need to create one
-    ## a replication is an object to track replication parameters
-    #if to_mission_or_replication.is_a?(Replication)
-      #replication = to_mission_or_replication
-    #else
-      #replication = Replication.new(:src_obj => self, :to_mission => to_mission_or_replication)
+  def json_for_export(options=nil)
+    if options.is_a?(Replication)
+      replication = options
+    else
+      replication = Replication.new(:mode => :export, :src_obj => self)
+    end
+
+    generate_json_for_export(replication)
+
+    # TODO uncomment and clean up to write output to a file
+    # make nice looking json output
+    #FileUtils.mkpath('test/fixtures')
+    #fixture_file = Rails.root.join('test/fixtures/', "form.import")
+    #import_data = File.open(fixture_file.to_s, 'w') do |f|
+      #f.write(JSON.pretty_generate replication.export_results)
     #end
+    replication.export_results
+  end
 
 
   ##################################################################################################

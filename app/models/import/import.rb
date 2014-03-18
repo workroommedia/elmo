@@ -41,7 +41,6 @@ class Import::Import
 
       # import all OptionSets and a single required Optioning
       @import_data.select{|json| json.keys.first == "option_set"}.each do |json_object|
-puts " \033[0;31m>>> we have an OptionSet:#{json_object}\033[0;0m"
         setup_and_create_new_option_set(json_object)
       end
       @import_data.delete_if{|json| json.keys.first == "option_set"}
@@ -57,12 +56,9 @@ puts " \033[0;31m>>> we have an OptionSet:#{json_object}\033[0;0m"
   # for each line of data, we need to determine:
   # * the model and content,
   # * check if the model has already been imported
-  #   * if it has, remap the data with the new model id
   #   * if it has not, create the new model and map the new model id into the translation map
   def setup_and_create_new_object(json_object)
-puts " >>>>> setup_and_create_new_object: #{json_object}"
     model_name, content = setup_model_name_and_content(json_object)
-puts "       #{model_name} #{content}"
 
     #create_new_object(model_name, content) unless @translation_map["#{model_name}_id-#{content["id"]}"]
     create_new_object(model_name, content) unless find_model_in_translation_map(model_name, content["id"])
@@ -72,13 +68,8 @@ puts "       #{model_name} #{content}"
   # * the model we are working with, and
   # * the content used to create the model
   def setup_model_name_and_content(json_object)
-puts "\033[0;33m================================================================================\033[0;0m"
-        model_name = json_object.keys.first
-        content    = json_object[model_name]
-
-puts " \u0604 WE ARE WORKING WITH:#{model_name}"
-puts "   \u0602 here is the content of what we are working on:#{content}"
-
+    model_name = json_object.keys.first
+    content    = json_object[model_name]
     return model_name, content
   end
 
@@ -87,47 +78,38 @@ puts "   \u0602 here is the content of what we are working on:#{content}"
   # params: model - we are trying to create
   # params: content - content we are populating the model with
   def create_new_object(model_name, content)
-puts " >>>>> create_new_object:create_relationship_objects:#{content}"
     # before we create the object, we need to create all the sub-objects first.
     # this will result in new content as object ids are translated to new object ids
     content = create_relationship_objects(content)
-
-puts "\033[1;34m~~~~~ Creating a new model:#{model_name}\033[0;0m"
     new_model = build_new_object(model_name, content)
 
     raise ImportError, "#{model_name} could not save. #{new_model.errors.inspect}" unless new_model.save
 
-puts "      ~~~~~ New Model:#{new_model.inspect}"
-puts "      ~~~~~ Mapping Id to:#{model_name} => #{content["id"]}"
     update_translation_map(model_name, content["id"], new_model.id)
-puts "      ~~~~~ translation map:#{@translation_map}"
 
-    return new_model
+    new_model
   end
 
   # build a new object for an import model. does not save the model!
   def build_new_object(model_name, content)
-puts "\033[1;34m~~~~~ BUILDING a new model:#{model_name}\033[0;0m"
-puts "      ~~~~~ Content:#{content.merge!(:mission_id => @dest_mission.id)}"
+    content.merge!(:mission_id => @dest_mission.id)
     new_model = model_name.camelize.constantize.new(content)
     if params = new_model.replicable_opts(:uniqueness)
       params = params.merge(:mission => @dest_mission, :dest_obj => new_model)
       # get a unique field value (e.g. name) for the dest_obj (may be the same as the source object's value)
       unique_field_val = new_model.generate_unique_field_value(params)
 
-puts "      ~~~~~ unique field val:#{unique_field_val}"
       # set the value on the dest_obj
       new_model.send("#{params[:field]}=", unique_field_val)
     end
 
-    return new_model
+    new_model
   end
 
   # if there are relationships with other objects, we need to handle them by either:
   #   * creating new objects, or
   #   * translate the import id to the id of an object we already created
   def create_relationship_objects(content)
-puts " >>>> create_relationship_objects.keys:#{look_for_keys_with_ids(content)}"
     # for a given model, look at the relationships with other objects it has by looking for fields with "id"
     find_relationships(content).each do |relationship_model|
       relationship_model_value = content[relationship_model]
@@ -159,14 +141,11 @@ puts " >>>> create_relationship_objects.keys:#{look_for_keys_with_ids(content)}"
   # result: ["form_id"]
   def find_relationships(object)
     keys = object.keys
-puts "look_for_keys_with_ids keys:#{keys}"
 
     # find the data with _id in the name. we are going to need to do a translation lookup on them
     id_keys = keys.select{|key| /_id$/.match(key)}
-puts "1. look_for_keys_with_ids id_keys:#{id_keys}"
     id_keys.delete_if { |k| object[k].nil? }        # Remove _id's that have no relationships with another object
 
-puts "2. look_for_keys_with_ids id_keys:#{id_keys}"
     id_keys
   end
 
@@ -200,7 +179,6 @@ puts "2. look_for_keys_with_ids id_keys:#{id_keys}"
 ####################################################################################################
 # BEGIN: OptionSet Specific Code
 ####################################################################################################
-
   def setup_and_create_new_option_set(json_object)
     model_name, content = setup_model_name_and_content(json_object)
 
@@ -212,7 +190,6 @@ puts "2. look_for_keys_with_ids id_keys:#{id_keys}"
     new_option_set = build_new_object(model_name, content)
 
     import_option_set_id = content["id"]
-puts "   import_option_set_id:#{import_option_set_id}"
 
     # find optioning for the option_set
     import_optioning_id, new_optioning = build_new_optioning(import_option_set_id)
@@ -220,10 +197,7 @@ puts "   import_option_set_id:#{import_option_set_id}"
     new_option_set.optionings = [new_optioning]
 
     raise ImportError, "#{model} could not save. #{new_model.errors.inspect}" unless new_option_set.save
-puts "      ~~~~~ New Model:#{new_option_set.inspect}"
-puts "      ~~~~~ Mapping Id to:#{model_name} => #{content["id"]}"
     update_translation_map(model_name, content["id"], new_option_set.id)
-puts "      ~~~~~ translation map:#{@translation_map}"
 
     update_translation_map("optioning", import_optioning_id, new_optioning.id)
   end

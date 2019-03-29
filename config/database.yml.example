@@ -1,20 +1,16 @@
+default: &default
+  adapter: postgresql
+  encoding: utf8
+  pool: 5
+
 production:
-  adapter: mysql2
-  database: elmo_p
-  host: localhost
-  username: elmo
-  password: xxx
+  <<: *default
+  database: nemo_production
 
 test:
-  adapter: mysql2
-  database: elmo_t
-  host: localhost
-  username: elmo
-  password: xxx
+  <<: *default
+  database: nemo_test
 
 development:
-  adapter: mysql2
-  database: elmo_d
-  host: localhost
-  username: elmo
-  password: xxx
+  <<: *default
+  database: nemo_development

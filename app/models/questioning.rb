@@ -1,68 +1,25 @@
-class Questioning < ActiveRecord::Base
-  include MissionBased, FormVersionable, Standardizable, Replicable
+class Questioning < FormItem
+  alias answers response_nodes
 
-  belongs_to(:form, :inverse_of => :questionings)
-  belongs_to(:question, :autosave => true, :inverse_of => :questionings)
-  has_many(:answers, :dependent => :destroy, :inverse_of => :questioning)
-  has_one(:condition, :autosave => true, :dependent => :destroy, :inverse_of => :questioning)
-  has_many(:referring_conditions, :class_name => "Condition", :foreign_key => "ref_qing_id", :dependent => :destroy, :inverse_of => :ref_qing)
-  has_many(:standard_form_reports, class_name: 'Report::StandardFormReport', foreign_key: 'disagg_qing_id', dependent: :nullify)
-
-  before_validation(:destroy_condition_if_ref_qing_blank)
-  before_create(:set_rank)
-  before_create(:set_mission)
-  after_destroy(:fix_ranks)
-
-  # also validates the associated condition because condition has validates(:questioning, ...)
-
-  accepts_nested_attributes_for(:question)
-  accepts_nested_attributes_for(:condition)
-
-  delegate :name,
-           :code,
-           :code=,
-           :level_count,
-           :multi_level?,
-           :option_set,
-           :option_set=,
-           :option_set_id,
-           :option_set_id=,
-           :printable?,
-           :qtype_name,
-           :qtype_name=,
-           :qtype,
-           :has_options?,
-           :options,
-           :all_options,
-           :select_options,
-           :odk_code,
-           :odk_constraint,
-           :subquestions,
-           to: :question
-
+  delegate :all_options, :audio_prompt, :auto_increment?, :code, :code=, :first_leaf_option_node,
+    :first_leaf_option, :first_level_option_nodes, :has_options?, :hint, :level_count, :level, :levels,
+    :min_max_error_msg, :multilevel?, :multimedia?, :name, :numeric?, :odk_constraint, :odk_name,
+    :option_set_id, :option_set_id=, :option_set, :option_set=, :options, :preordered_option_nodes,
+    :printable?, :qtype_name, :qtype_name=, :qtype, :select_options, :sms_formatting_as_appendix?,
+    :sms_formatting_as_text?, :standardized?, :subqings, :tags, :temporal?, :title, :metadata_type,
+    :reference,
+    to: :question
   delegate :published?, to: :form
   delegate :smsable?, to: :form, prefix: true
-  delegate :verify_ordering, to: :condition, prefix: true, allow_nil: true
+  delegate :group_name, to: :parent, prefix: true, allow_nil: true
 
-  replicable child_assocs: [:question, :condition], parent_assoc: :form, dont_copy: :hidden
+  scope :visible, -> { where(hidden: false) }
 
-  scope(:visible, where(:hidden => false))
+  validates_with Forms::DynamicPatternValidator,
+    field_name: :default,
+    force_calc_if: ->(qing) { qing.qtype&.numeric? }
 
-  # remove heirarch of objects
-  def self.terminate_sub_relationships(questioning_ids)
-    answers = Answer.where(questioning_id: questioning_ids)
-    Choice.where(answer_id: answers).delete_all
-    answers.delete_all
-  end
-
-  # returns any questionings appearing before this one on the form
-  def previous
-    form.questionings.reject{|q| !rank.nil? && (q == self || q.rank > rank)}
-  end
-
-  def has_condition?
-    !condition.nil?
-  end
+  accepts_nested_attributes_for :question
 
   # checks if this form has any answers
   # uses the form.qing_answer_count method because these requests tend to come in batches so better
@@ -71,19 +28,43 @@ class Questioning < ActiveRecord::Base
     form.qing_answer_count(self) > 0
   end
 
-  # destroys condition and ensures that the condition param is nulled out
-  def destroy_condition
-    condition.destroy_with_copies
-    self.condition = nil
+  def answer_count
+    answers.count
   end
 
-  def condition_changed?
-    condition.try(:changed?)
+  def conditions_changed?
+    display_conditions.any?(&:changed?) || display_conditions.any?(&:new_record?)
   end
 
-  # gets ranks of all referring conditions' questionings (should use eager loading)
-  def referring_condition_ranks
-    referring_conditions.map{|c| c.questioning.rank}
+  def subqings
+    @subqings ||= if multilevel?
+      levels.each_with_index.map { |l, i| Subqing.new(questioning: self, level: l, rank: i + 1) }
+    else
+      [Subqing.new(questioning: self, rank: 1)]
+    end
+  end
+
+  def core_changed?
+    (changed & %w(required hidden default)).any? || conditions_changed?
+  end
+
+  # Checks if this Questioning is in a repeat group.
+  def repeatable?
+    # Questions can only be repeatable if they're in a group, which they can't be if they're level 1.
+    ancestry_depth > 1 && parent.repeatable?
+  end
+
+  def smsable?
+    visible? && qtype.smsable?
+  end
+
+  # Duck type
+  def fragment?
+    false
+  end
+
+  def qid
+    question.id
   end
 
   # REFACTOR: should use translation delegation, from abandoned std_objs branch
@@ -105,28 +86,19 @@ class Questioning < ActiveRecord::Base
   end
 
   def is_question_method?(symbol)
-    symbol.match(/^((name|hint)_([a-z]{2})(=?))(_before_type_cast)?$/)
+    symbol.match(/\A((name|hint)_([a-z]{2})(=?))(_before_type_cast)?\z/)
   end
   # /REFACTOR
 
   private
-    # sets rank if not already set
-    def set_rank
-      self.rank ||= (form.try(:max_rank) || 0) + 1
-      return true
-    end
 
-    def destroy_condition_if_ref_qing_blank
-      destroy_condition if condition && condition.ref_qing.blank?
+  def normalize
+    super
+    if question.metadata_type.present?
+      self.hidden = true
+      display_conditions.destroy_all
     end
-
-    # copy mission from question
-    def set_mission
-      self.mission = form.try(:mission)
-    end
-
-    # repair the ranks of the remaining questions on the form
-    def fix_ranks
-      form.fix_ranks
-    end
+    self.required = false if hidden? || read_only?
+    true
+  end
 end

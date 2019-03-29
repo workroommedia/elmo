@@ -1,0 +1,84 @@
+.users_index {
+  tr.inactive {
+    td, a {
+      color: #ccc;
+    }
+  }
+}
+
+.qrcode {
+  table {
+    border-width: 0;
+    border-style: none;
+    border-color: #0000ff;
+    border-collapse: collapse;
+  }
+
+  td {
+    border-left: solid 3px #000;
+    padding: 0;
+    padding-bottom: 0px;
+    margin: 0;
+    width: 0px;
+    height: 3px;
+  }
+
+  td.black { border-color: #000; }
+  td.white { border-color: #fff; }
+}
+
+/* user edit */
+form.user_form {
+
+  textarea#user_notes {
+    height: 100px;
+  }
+
+  div.form-field#assignments {
+    .mission,
+    .role {
+      margin-right: 10px;
+    }
+
+    .role {
+      flex: 2 1 0;
+    }
+
+    .mission {
+      flex: 1 1 0;
+      div {
+        padding-top: 8px;
+      }
+    }
+
+    .assignment-row {
+      display: flex;
+      padding: 5px 0 5px 0px;
+    }
+
+    .assignment-header {
+      color: #aaa;
+      font-size: 11px;
+      min-height: 20px;
+      display: flex;
+    }
+
+    i.fa-close {
+      font-size: 16px;
+      color: $deemphasized-link-color;
+    }
+
+    a.add-assignment, a.remove {
+      cursor: pointer;
+    }
+  }
+
+  div.user_gender_custom {
+    display: none; // initially hidden
+  }
+
+  div.user_api_key .widget > div {
+    display: inline-block;
+    margin-right: 5px;
+  }
+}

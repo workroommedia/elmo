@@ -1,19 +1,14 @@
-require File.expand_path('../boot', __FILE__)
+# frozen_string_literal: true
 
-require 'rails/all'
+require File.expand_path("../boot", __FILE__)
 
-# If you have a Gemfile, require the gems listed there, including any gems
-# you've limited to :test, :development, or :production.
-Bundler.require(:default, Rails.env) if defined?(Bundler)
+require "rails/all"
+require "coffee_script"
 
-if defined?(Bundler)
-  # If you precompile assets before deploying to production, use this line
-  Bundler.require *Rails.groups(:assets => %w(development test))
-  # If you want your assets lazily compiled in production, use this line
-  # Bundler.require(:default, :assets, Rails.env)
-end
+Bundler.require(*Rails.groups)
 
 module ELMO
+  # Application-wide settings and setup.
   class Application < Rails::Application
     # Settings in config/environments/* take precedence over those specified here.
     # Application configuration should go into files in config/initializers
@@ -23,7 +18,8 @@ module ELMO
     config.autoload_paths += [
       "#{config.root}/app/controllers/concerns",
       "#{config.root}/app/controllers/concerns/application_controller",
-      "#{config.root}/app/models/concerns"
+      "#{config.root}/app/models/concerns",
+      "#{config.root}/lib"
     ]
 
     # Only load the plugins named here, in the order given (default is alphabetical).
@@ -36,45 +32,75 @@ module ELMO
     # Set Time.zone default to the specified zone and make Active Record auto-convert to this zone.
     # Run "rake -D time" for a list of tasks for finding time zone names. Default is UTC.
     # default to eastern -- this will be overwritten if there is a timezone setting in the DB
-    config.time_zone = 'Eastern Time (US & Canada)'
+    config.time_zone = "Eastern Time (US & Canada)"
 
     # be picky about available locales
-    config.i18n.enforce_available_locales = true
+    config.i18n.enforce_available_locales = false
 
     # The default locale is :en and all translations from config/locales/*.rb,yml are auto loaded.
-    # config.i18n.load_path += Dir[Rails.root.join('my', 'locales', '*.{rb,yml}').to_s]
+    config.i18n.load_path += Dir[Rails.root.join("config", "locales", "**", "*.{rb,yml}")]
 
     # Configure the default encoding used in templates for Ruby 1.9.
     config.encoding = "utf-8"
 
     # Configure sensitive parameters which will be filtered from the log file.
-    config.filter_parameters += [:password, :password_confirmation]
+    config.filter_parameters += %i[password password_confirmation
+                                   twilio_account_sid twilio_auth_token frontlinecloud_api_key
+                                   session warden secret salt cookie csrf user_credentials session_id data]
 
     # Enable the asset pipeline
     config.assets.enabled = true
 
     # Version of your assets, change this if you want to expire all your assets
-    config.assets.version = '1.0'
+    config.assets.version = "1.0"
+
+    # Use Delayed::Job as the ActiveJob queue adapter
+    config.active_job.queue_adapter = :delayed_job
 
     config.generators do |g|
       g.test_framework :rspec
       g.integration_framework :rspec
+      g.orm :active_record, primary_key_type: :uuid
     end
+
+    config.active_record.time_zone_aware_types = [:datetime]
 
     ####################################
     # CUSTOM SETTINGS
     ####################################
 
-    # read system version as git tag
-    configatron.system_version = `git describe`.strip rescue "?"
+    # NOTE: Don't add anymore configatron settings. Use settings.yml instead.
 
-    # regular expressions
-    configatron.lat_lng_regexp = /^(-?\d+(\.\d+)?)\s*[,;:\s]\s*(-?\d+(\.\d+)?)/
-
-    # a short tag that starts smses and email subjects for broadcasts
-    configatron.broadcast_tag = "[TCC]"
+    # read system version from file
+    configatron.system_version = File.read(Rails.root.join("VERSION")).strip
 
     # locales with full translations (I18n.available_locales returns a whole bunch more defined by i18n-js)
-    configatron.full_locales = [:en, :fr]
+    configatron.full_locales = %i[en fr es ar ko]
+
+    # Of the locales in full_locales, the ones displayed RTL.
+    configatron.rtl_locales = %i[ar]
+
+    # For security.
+    config.action_dispatch.default_headers = {"X-Frame-Options" => "DENY"}
+
+    # requests-per-minute limit for ODK Collect endpoints
+    configatron.direct_auth_request_limit = 30
+
+    # logins-per-minute threshold for showing a captcha
+    configatron.login_captcha_threshold = 30
+
+    # default timeout for sensitive areas requiring a password reprompt
+    configatron.recent_login_max_age = 60.minutes
+
+    # We use \r\n for CSV row separator because Excel seems to prefer it.
+    configatron.csv_row_separator = "\r\n"
+
+    # Restrict available locales to defined system locales
+    # This should replace `configatron.full_locales` eventually
+    # assuming this caused no further issues
+    I18n.available_locales = configatron.full_locales
+
+    # This is the default. It can be overridden in local_config.rb, which comes later.
+    configatron.offline_mode = false
   end
 end

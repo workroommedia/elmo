@@ -1,9 +1,9 @@
-class RemoveMultiLevelFromOptionSets < ActiveRecord::Migration
+class RemoveMultiLevelFromOptionSets < ActiveRecord::Migration[4.2]
   def up
-    remove_column :option_sets, :multi_level
+    remove_column :option_sets, :multilevel
   end
 
   def down
-    add_column :option_sets, :multi_level, :boolean
+    add_column :option_sets, :multilevel, :boolean
   end
 end

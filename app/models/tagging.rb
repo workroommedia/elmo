@@ -1,9 +1,13 @@
-class Tagging < ActiveRecord::Base
-  include MissionBased
+# frozen_string_literal: true
+
+# Tagging associates questions with tags
+class Tagging < ApplicationRecord
+  include Replication::Replicable
 
   belongs_to :question
   belongs_to :tag
-  attr_accessible :is_standard, :standard_id
 
   delegate :mission_id, to: :question
+
+  replicable child_assocs: :tag, backward_assocs: :question, dont_copy: %i[question_id tag_id]
 end

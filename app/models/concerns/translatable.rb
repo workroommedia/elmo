@@ -2,22 +2,35 @@
 module Translatable
   extend ActiveSupport::Concern
 
-  included do
-
-  end
+  cattr_accessor :default_options
 
   module ClassMethods
-
     def translates(*args)
-      # shave off the optional options hash at the end
-      class_variable_set('@@translate_options', args[-1].is_a?(Hash) ? args.delete_at(-1) : {})
+      # Shave off the optional options hash at the end and merge with defaults.
+      options = args[-1].is_a?(Hash) ? args.delete_at(-1) : {}
+      default_options = configatron.translatable.default_options.to_h
+      options = default_options.merge(options)
 
-      # save the list of translated fields
+      # Tidy options if given.
+      options[:locales] = options[:locales].map(&:to_s) if options[:locales].is_a?(Array)
+
+      class_variable_set('@@translate_options', options)
       class_variable_set('@@translated_fields', args)
 
-      # set up the _tranlsations fields to serialize
+      # Setup an accessor if not present.
       translated_fields.each do |f|
-        ancestors.include?(ActiveRecord::Base) ? (serialize "#{f}_translations", JSON) : (attr_accessor "#{f}_translations")
+        unless ancestors.include?(ActiveRecord::Base)
+          attr_accessor "#{f}_translations"
+        end
+      end
+
+      # Setup *_translations assignment handlers for each field.
+      translated_fields.each do |field|
+        class_eval %Q{
+          def #{field}_translations=(val)
+            translatable_set_hash('#{field}', val)
+          end
+        }
       end
     end
 
@@ -28,6 +41,13 @@ module Translatable
 
     def translate_options
       class_variable_defined?('@@translate_options') ? class_variable_get('@@translate_options') : nil
+    end
+
+    def validates_translated_length_of(*attr_names)
+      attr_names = attr_names.map do |attr_name|
+        attr_name.is_a?(Symbol) ? "#{attr_name}_translations".to_sym : attr_name
+      end
+      validates_with Translatable::TranslatableLengthValidator, _merge_attributes(attr_names)
     end
   end
 
@@ -65,62 +85,79 @@ module Translatable
     !self.class.translated_fields.nil? && translatable_parse_method(symbol) || super
   end
 
-  def translatable_translate(field, locale, is_setter, options, args)
+  # Sets field_translations value internally.
+  def translatable_set_hash(field, value)
+    unless value.nil?
+      # Remove any blank values and stringify.
+      value = value.reject{ |_, v| v.blank? }.stringify_keys
 
+      # Set back to nil if empty
+      value = nil if value.empty?
+    end
+
+    translatable_set(field, value)
+    translatable_set_canonical(field)
+  end
+
+  # Assigns the canonical_xxx attrib if applicable
+  def translatable_set_canonical(field)
+    # Set canonical_name if appropriate
+    if respond_to?("canonical_#{field}=")
+      trans = translatable_get(field) || {}
+      send("canonical_#{field}=", trans[I18n.default_locale.to_s] || trans.values.first)
+    end
+  end
+
+  def translatable_translate(field, locale, is_setter, options, args)
     # if we're setting the value
     if is_setter
-      # init the empty hash if it's nil
-      send("#{field}_translations=", {}) if send("#{field}_translations").nil?
+      cur_hash = translatable_get(field) || {}
 
       # set the value in the appropriate translation hash
       # we use the merge method because otherwise the _changed? method doesn't work right
-      send("#{field}_translations=", send("#{field}_translations").merge(locale => args[1]))
-
-      # if the locale is the default locale, also cache the value in the _ attribute
-      send("_#{field}=", args[1]) if locale.to_sym == I18n.default_locale
+      translatable_set_hash(field, cur_hash.merge(locale => args[1]))
 
     # otherwise just return what we have
     else
-      if send("#{field}_translations").nil?
-        str = nil
-      else
-        # try the specified locale
-        str = send("#{field}_translations")[locale]
+      translations = translatable_get(field)
+      return nil if translations.nil?
 
-        # if the translation is blank and strict mode is off
-        if str.blank? && !options[:strict]
-          # try the current locale
-          str = send("#{field}_translations")[I18n.locale.to_s]
+      options[:fallbacks] = (options[:fallbacks] || []).map(&:to_s)
 
-          if str.blank?
-            # try the default locale
-            str = send("#{field}_translations")[I18n.default_locale.to_s]
+      # Try the specified locale and fallbacks.
+      to_try = [locale.to_s] + options[:fallbacks]
 
-            # if str is still blank, search the translations for /any/ non-blank string
-            if str.blank?
-              if (non_blank_pair = send("#{field}_translations").find{|locale, value| !value.blank?})
-                str = non_blank_pair[1]
-              end
-            end
-          end
+      # Strict options mean we only use the specified locale and fallbacks.
+      # Else we can try other locales too.
+      unless options[:strict]
+        to_try += [I18n.locale.to_s, I18n.default_locale.to_s] + translations.keys
+      end
+
+      # If allowed locales are given, restrict attempted locales to those.
+      allowed = self.class.translate_options[:locales]
+      allowed = allowed.call if allowed.is_a?(Proc)
+      to_try &= allowed.map(&:to_s) if allowed.present?
+
+      to_try.each do |locale|
+        if found = translations[locale]
+          return found
         end
       end
 
-      # return whatever we have at this point, could be nil
-      return str
+      nil
     end
   end
 
   # checks if all the translations are blank for the given field
   def translatable_all_blank?(field, locale, is_setter, options, args)
-    send("#{field}_translations").nil? || !send("#{field}_translations").detect{|l,t| !t.blank?}
+    translatable_get(field).nil? || !translatable_get(field).detect{|l,t| !t.blank?}
   end
 
   def translatable_parse_method(symbol, arg1 = nil, arg2 = nil)
     return nil if self.class.translated_fields.nil?
 
     fields = self.class.translated_fields.join("|")
-    if symbol.to_s.match(/^(#{fields})(_([a-z]{2}))?(_before_type_cast)?(=?)$/)
+    if symbol.to_s.match(/\A(#{fields})(_([a-z]{2}))?(_before_type_cast)?(=?)\z/)
 
       # get bits
       action = :translate
@@ -155,7 +192,7 @@ module Translatable
       # if we get this far, return the bits (locale should always be a string)
       [action, field, locale.to_s, is_setter, options]
 
-    elsif symbol.to_s.match(/^(#{fields})_all_blank\?$/)
+    elsif symbol.to_s.match(/\A(#{fields})_all_blank\?\z/)
       action = :all_blank?
       field = $1
 
@@ -165,17 +202,53 @@ module Translatable
     end
   end
 
+  def translatable_get(field)
+    if is_a?(ActiveRecord::Base)
+      read_attribute(:"#{field}_translations")
+    else
+      instance_variable_get("@#{field}_translations")
+    end
+  end
+
+  def translatable_set(field, value)
+    if is_a?(ActiveRecord::Base)
+      write_attribute(:"#{field}_translations", value)
+    else
+      instance_variable_set("@#{field}_translations", value)
+    end
+  end
+
   def available_locales(options = {})
     # get union of all locales of all translated fields, and convert to symbol
     locales = self.class.translated_fields.inject([]) do |union, field|
-      trans = send("#{field}_translations")
+      trans = translatable_get(field)
       union |= trans.keys unless trans.nil?
       union
-    end.map{|l| l.to_sym}
+    end.map(&:to_sym)
 
     # honor :except_current option
     locales -= [I18n.locale] if options[:except_current]
 
     locales
+  end
+end
+module Translatable
+  class TranslatableLengthValidator < ActiveModel::Validations::LengthValidator
+    # The tokenizer determines how to split up an attribute value before it is counted by the length validator
+    # by default, it will split a string based on characters, but you can pass in a proc to use a different tokenizer
+    # this only works for strings, however.
+    # For these serialized fields, the value the validator has access to is a hash so this overridden tokenizer
+    # checks for a hash and converts it to its json representation to count the number of characters before storing it
+    def tokenize(value)
+      if value.is_a?(String)
+        if options[:tokenizer]
+          options[:tokenizer].call(value)
+        elsif !value.encoding_aware?
+          value.mb_chars
+        end
+      elsif value.is_a?(Hash)
+        value.to_json
+      end
+    end
   end
 end

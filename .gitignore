@@ -8,21 +8,51 @@ railsenv
 config/railsenv
 config/initializers/local_config.rb
 config/database.yml
+config/mysql2postgres.yml
 config/thinking_sphinx.yml
+config/memcached_server
 TODO
 .sass-cache/
 NOTES
 .idea
 
+# MS Office backup files
+~$*
+
 # compiled assets
 public/assets
 
-# ignore the fixtures dir as it's only used for tmp uploaded files right now
-test/fixtures
+public/form-attachments/
 
 # these are auto generated
 config/*.sphinx.conf
 
+# Read the docs files
+*.mo
+docs/readthedocs/_build
+
 # manually generated files for quick searching
 rake_tasks.txt
 routes.txt
+
+# Theme-related things
+/app/assets/stylesheets/application_*.scss
+/app/assets/stylesheets/all/themes/_custom_theme.scss
+/app/assets/images/logos/custom
+/config/settings/themes/custom.yml
+/theme
+
+# file uploads
+/uploads
+
+# Bundle installs
+vendor/bundle/
+
+config/settings.local.yml
+config/settings/*.local.yml
+config/environments/*.local.yml
+/public/packs
+/public/packs-test
+/node_modules
+yarn-debug.log*
+.yarn-integrity

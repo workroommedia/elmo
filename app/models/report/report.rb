@@ -1,31 +1,27 @@
 require 'mission_based'
-class Report::Report < ActiveRecord::Base
+class Report::Report < ApplicationRecord
   include MissionBased
 
-  attr_accessible :type, :name, :form_id, :option_set_id, :display_type, :bar_style, :unreviewed, :filter,
-    :question_labels, :show_question_labels, :question_order, :text_responses, :percent_type, :unique_rows, :calculations_attributes, :calculations,
-    :option_set, :mission_id, :mission, :disagg_question_id
+  has_many :option_set_choices, class_name: "Report::OptionSetChoice", foreign_key: "report_report_id", inverse_of: :report,
+    dependent: :destroy, autosave: true
+  has_many :option_sets, through: :option_set_choices
+  has_many :calculations, -> { order("rank") }, class_name: "Report::Calculation", foreign_key: "report_report_id", inverse_of: :report,
+     dependent: :destroy, autosave: true
+  belongs_to :creator, class_name: "User"
 
-  attr_accessible(:option_set_choices_attributes)
+  accepts_nested_attributes_for :calculations, allow_destroy: true
+  accepts_nested_attributes_for :option_set_choices, allow_destroy: true
 
-  has_many(:option_set_choices, :class_name => "Report::OptionSetChoice", :foreign_key => "report_report_id", :inverse_of => :report,
-    :dependent => :destroy, :autosave => true)
-  has_many(:option_sets, :through => :option_set_choices)
-  has_many(:calculations, :class_name => "Report::Calculation", :foreign_key => "report_report_id", :inverse_of => :report,
-    :order => "rank", :dependent => :destroy, :autosave => true)
+  validates :mission, presence: true
 
-  accepts_nested_attributes_for(:calculations, :allow_destroy => true)
-  accepts_nested_attributes_for(:option_set_choices, :allow_destroy => true)
+  scope :by_viewed_at, -> { order("viewed_at desc") }
+  scope :by_popularity, -> { order("view_count desc") }
+  scope :by_name, -> { order("name") }
 
-  validates(:mission, :presence => true)
+  before_save :normalize_attribs
 
-  scope(:by_viewed_at, order("viewed_at desc"))
-  scope(:by_popularity, order("view_count desc"))
-  scope(:by_name, order("name"))
-
-  before_save(:normalize_attribs)
-
-  attr_accessor :just_created
+  attr_accessor :just_created, :populated
+  alias_method :populated?, :populated
 
   # this is overridden by StandardFormReport, and ignored elsewhere
   attr_accessor :disagg_question_id
@@ -49,13 +45,20 @@ class Report::Report < ActiveRecord::Base
 
       new_without_cast(*a, &b)
     end
-    alias_method_chain :new, :cast
   end
 
   # remove report sub-relationship of objects
   def self.terminate_sub_relationships(report_ids)
     Report::Calculation.where(report_report_id: report_ids).delete_all
     Report::OptionSetChoice.where(report_report_id: report_ids).delete_all
+  end
+
+  def cache_key
+    chunks = [super]
+    chunks << option_set_choices.map(&:option_set_id)
+    chunks << "calcs-#{calculations.count}-"
+    chunks << (calculations.reorder(updated_at: :desc).first.try(:cache_key) || "none")
+    chunks.join("/")
   end
 
   # generates a default name that won't collide with any existing names
@@ -78,19 +81,17 @@ class Report::Report < ActiveRecord::Base
     self.name = "#{prefix}#{suffix}"
   end
 
-  # runs the report by populating header_set, data, and totals objects
-  def run
-    # set the has run flag
-    @has_run = true
-
-    # the remaining stuff from run in legacy reports can be found in Report::LegacyReport
+  # Should be overridden by children.
+  def run(current_ability = nil, _options = {})
+    raise NotImplementedError
   end
 
   # records a viewing of the form, keeping the view_count up to date
+  # It's using the update_column to avoid it updating the updated_at
+  # value (which would invalidate the cache). It also skips validations.
   def record_viewing
-    self.viewed_at = Time.now
-    self.view_count += 1
-    save(:validate => false)
+    update_column(:viewed_at, Time.now)
+    update_column(:view_count, self.view_count += 1)
   end
 
   def as_json(options = {})
@@ -100,6 +101,7 @@ class Report::Report < ActiveRecord::Base
     h[:type] = type
     h[:filter] = filter
     h[:empty] = empty?
+    h[:populated] = populated?
     h
   end
 
@@ -115,13 +117,12 @@ class Report::Report < ActiveRecord::Base
 
   private
 
-    def normalize_attribs
-      # we now do default values here as well as changing blanks to nils.
-      # the AR default stuff doesn't work b/c the blank from the client side overwrites the default and there's no easy way to get it back
-      self.bar_style = "side_by_side" if bar_style.blank?
-      self.display_type = "table" if display_type.blank?
-      self.percent_type = "none" if percent_type.blank?
-      self.text_responses = nil if text_responses.blank?
-    end
-
+  def normalize_attribs
+    # we now do default values here as well as changing blanks to nils.
+    # the AR default stuff doesn't work b/c the blank from the client side overwrites the default and there's no easy way to get it back
+    self.bar_style = "side_by_side" if bar_style.blank?
+    self.display_type = "table" if display_type.blank?
+    self.percent_type = "none" if percent_type.blank?
+    self.text_responses = nil if text_responses.blank?
+  end
 end

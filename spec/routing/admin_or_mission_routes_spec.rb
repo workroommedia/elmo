@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe 'router' do
   it 'routes admin mode forms' do
@@ -19,16 +19,6 @@ describe 'router' do
 
   it 'rejects forms with no mode' do
     expect(:get => '/en/forms').not_to be_routable
-  end
-
-  it 'routes options suggest in admin mode' do
-    expect(:get => '/en/admin/options/suggest').to route_to(
-      :controller => 'options', :action => 'suggest', :locale => 'en', :mode => 'admin')
-  end
-
-  it 'routes options suggest in mission mode' do
-    expect(:get => '/en/m/mission123/options/suggest').to route_to(
-      :controller => 'options', :action => 'suggest', :locale => 'en', :mode => 'm', :mission_name => 'mission123')
   end
 
   it 'routes user show in admin mode' do

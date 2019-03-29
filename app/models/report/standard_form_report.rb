@@ -1,19 +1,25 @@
 # when run, this report generates a fairly complex data structure, as follows:
+# note: the elements in these arrays are not really hashes, but various types of objects
 # StandardFormReport = {
 #   :summary_collection => {
 #     :subsets => [
 #       {
-#         :groups => [
+#         :tag_groups => [
 #           {
-#             :clusters => [
-#               {:summaries => [summary, summary, ...]},
-#               {:summaries => [summary, summary, ...]}
-#             ]
-#           },
-#           {
-#             :clusters => [
-#               {:summaries => [summary, summary, ...]},
-#               {:summaries => [summary, summary, ...]}
+#             :tag => tag_object,
+#             :type_groups => [
+#               {
+#                 :clusters => [
+#                   {:summaries => [summary, summary, ...]},
+#                   {:summaries => [summary, summary, ...]}
+#                 ]
+#               },
+#               {
+#                 :clusters => [
+#                   {:summaries => [summary, summary, ...]},
+#                   {:summaries => [summary, summary, ...]}
+#                 ]
+#               }
 #             ]
 #           }
 #         ]
@@ -32,7 +38,15 @@ class Report::StandardFormReport < Report::Report
   attr_reader :summary_collection, :response_count
 
   # question types that we leave off this report (stored as a hash for better performance)
-  EXCLUDED_TYPES = {'location' => true}
+  EXCLUDED_TYPES = {
+    'location' => true,
+    'image' => true,
+    'annotated_image' => true,
+    'signature' => true,
+    'sketch' => true,
+    'video' => true,
+    'audio' => true
+  }
 
   # options for the question_order attrib
   QUESTION_ORDER_OPTIONS = %w(number type)
@@ -42,6 +56,9 @@ class Report::StandardFormReport < Report::Report
 
   TEXT_RESPONSE_OPTIONS = %w(all short_only none)
 
+  # How many non reporting enumerators it will show on the report before summarizing the rest
+  MISSING_OBSERVERS_SIZE_LIMIT = 100
+
   def as_json(options = {})
     # add the required methods to the methods option
     h = super(options)
@@ -49,15 +66,19 @@ class Report::StandardFormReport < Report::Report
     h[:mission] = form.mission.as_json(:only => [:id, :name])
     h[:form] = form.as_json(:only => [:id, :name])
     h[:subsets] = subsets
-    h[:observers_without_responses] = observers_without_responses.as_json(:only => [:id, :name])
+    h[:enumerators_without_responses] = enumerators_without_responses.as_json(:only => [:id, :name])
     h[:disagg_question_id] = disagg_question_id
     h[:disagg_qing] = disagg_qing.as_json(:only => :id, :include => {:question => {:only => :code}})
     h[:no_data] = no_data?
+    h[:raw_answer_limit] = Report::SummaryCollectionBuilder::RAW_ANSWER_LIMIT
+
+    self.populated = true
+
     h
   end
 
   # current_ability - the ability under which the report should be run
-  def run(current_ability)
+  def run(current_ability, _options = {})
     # make sure the disagg_qing is still on this form (unlikely to be an error)
     raise Report::ReportError.new("disaggregation question is not on this form") unless disagg_qing.nil? || disagg_qing.form_id == form_id
 
@@ -67,37 +88,45 @@ class Report::StandardFormReport < Report::Report
     # pre-calculate response count, accounting for user ability
     @response_count = form.responses.accessible_by(current_ability).count
 
-    # eager load form
-    f = Form.includes({:questionings => [
-      # eager load qing conditions
-      {:condition => :ref_qing},
-
-      # eager load referring conditions and their questionings
-      {:referring_conditions => :questioning},
-
-      # eager load questions and their option sets
-      {:question => :option_set}
-    ]}).find(form_id)
-
     # determine if we should restrict the responses to a single user, or allow all
-    restrict_to_user = current_ability.user.role(form.mission) == 'observer' ? current_ability.user : nil
+    restrict_to_user = current_ability.user.role(form.mission) == 'enumerator' ? current_ability.user : nil
 
     # generate summary collection (sets of disaggregated summaries)
-    @summary_collection = Report::SummaryCollectionBuilder.new(questionings_to_include(f), disagg_qing,
-      :restrict_to_user => restrict_to_user, :question_order => question_order).build
+    @summary_collection = Report::SummaryCollectionBuilder.new(questionings_to_include(form), disagg_qing,
+      restrict_to_user: restrict_to_user).build
+
+    # now tell each subset to group summaries by tag
+    @summary_collection.subsets.each do |s|
+      s.build_tag_groups(question_order: question_order || 'number', group_by_tag: group_by_tag)
+    end
+
+    @summary_collection
   end
 
-  # returns all non-admin users in the form's mission with the given role that have not submitted any responses to the form
-  # options[:role] - (symbol) the role to check for
+  # Returns all non-admin users in the form's mission with the given role that have
+  # not submitted any responses to the form
+  #
+  # options[:role] the role to check for
+  # options[:limit] how many users we want to fetch from the db
   def users_without_responses(options)
-    # eager load responses with users
-    all_observers = form.mission.assignments.includes(:user).find_all{|a| a.role.to_sym == options[:role] && !a.user.admin?}.map(&:user)
-    submitters = form.responses.includes(:user).map(&:user).uniq
-    @users_without_responses = all_observers - submitters
+    User.without_responses_for_form(form, options)
   end
 
-  def observers_without_responses
-    users_without_responses(:role => :observer)
+  def enumerators_without_responses
+    users = users_without_responses({role: :enumerator, limit: MISSING_OBSERVERS_SIZE_LIMIT})
+
+    if users.empty?
+      I18n.t('report/report.zero_missing_enumerators')
+    else
+      truncated = false
+      if users.size > MISSING_OBSERVERS_SIZE_LIMIT
+        users.slice!(MISSING_OBSERVERS_SIZE_LIMIT..-1)
+        truncated = true
+      end
+      names = users.map(&:name).join(', ')
+      truncation_msg = truncated ? ", ... (#{I18n.t('common.clipped')})" : ""
+      "#{names}#{truncation_msg}"
+    end
   end
 
   # returns the list of questionings to include in this report
@@ -135,12 +164,16 @@ class Report::StandardFormReport < Report::Report
     if question_id.nil?
       self.disagg_qing = nil
     else
-      self.disagg_qing = form.questionings.detect{|qing| qing.question_id == question_id.to_i}
+      self.disagg_qing = form.questionings.detect{|qing| qing.question_id == question_id}
     end
   end
 
   # returns whether this report can be disaggregated by the given questioning
   def can_disaggregate_with?(qing)
     qing.nil? || DISAGGABLE_TYPES.include?(qing.question.qtype_name)
+  end
+
+  def references?
+    form.visible_questionings.any? { |qing| qing.reference.present? }
   end
 end

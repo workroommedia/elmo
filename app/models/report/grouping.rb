@@ -23,15 +23,22 @@ class Report::Grouping
     rel = rel.where(where_expr.sql)
     rel = rel.group(name_expr.sql)
     rel = rel.group(value_expr.sql)
-    rel = rel.group(type_expr.sql)
 
     # add order
     rel = rel.order(sort_expr.sql) if sort_expr
 
     # add joins, with label as prefix
-    rel = rel.joins(Report::Join.list_to_sql(@calculation.joins, prefix))
+    rel = rel.joins(Results::Join.list_to_sql(@calculation.joins, prefix: prefix))
+
+    # Filter for top-level answers only if applicable.
+    rel = filter_non_top_level_answers(rel, prefix) if @calculation.question1
 
     return rel
+  end
+
+  def filter_non_top_level_answers(rel, prefix)
+    return rel unless @calculation.joins.include?(:options)
+    rel.where("#{prefix}_ans_opt_nodes.ancestry_depth IS NULL OR #{prefix}_ans_opt_nodes.ancestry_depth <= 1")
   end
 
   def header_title

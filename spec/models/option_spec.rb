@@ -1,62 +1,113 @@
-require 'spec_helper'
+# frozen_string_literal: true
+
+require "rails_helper"
 
 describe Option do
-
-  it 'should create cleanly' do
-    create(:option, :name => 'Foo')
+  it "should create cleanly" do
+    create(:option, name: "Foo")
   end
 
-  describe 'suggestions' do
+  describe "normalization" do
+    let(:option) { build(:option, submitted) }
+    subject { submitted.keys.map { |k| [k, option.send(k)] }.to_h }
 
-    shared_examples 'return matches' do
-      it 'should return two matches' do
-        expect(@suggestions.size).to eq 2
-        expect(@suggestions[0].name).to eq 'Foo'
-        expect(@suggestions[1].name).to eq 'f' # Placeholder for creating new option
-      end
-    end
+    before { option.valid? } # Trigger normalization.
 
-    context 'for nil mission' do
-      before do
-        create(:option, :is_standard => true, :name => 'Foo')
-        @suggestions = Option.suggestions(nil, 'f')
+    describe "value" do
+      context "integer" do
+        let(:submitted) { {value: 123} }
+        it { is_expected.to eq(value: 123) }
       end
 
-      it_should_behave_like 'return matches'
-    end
+      context "integer string" do
+        let(:submitted) { {value: "123"} }
+        it { is_expected.to eq(value: 123) }
 
-    context 'for non-nil mission' do
-      before do
-        create(:option, :name => 'Foo')
-        @suggestions = Option.suggestions(get_mission, 'f')
+        context "leading and trailing whitespace" do
+          let(:submitted) { {value: "\t  123  \n"} }
+          it { is_expected.to eq(value: 123) }
+        end
       end
 
-      it_should_behave_like 'return matches'
+      context "blank string" do
+        let(:submitted) { {value: "   \t\n"} }
+        it { is_expected.to eq(value: nil) }
+      end
+
+      context "non-numeric string" do
+        let(:submitted) { {value: "  notanumber123  "} }
+        it { is_expected.to eq(value: 0) } # Rails does this automatically
+      end
     end
   end
 
-  describe 'recent changes' do
-    before { @option = create(:option, name: 'Foo') }
+  describe "#coordinates=" do
+    let(:option) { create(:option, coordinates: str) }
+    subject(:coordinates) { option.coordinates }
 
-    context 'without flag set' do
-      before do
-        @option.update_attributes!(name: 'Bar')
+    context do
+      let(:str) { "12.3,4.56" }
+      it { is_expected.to eq("12.3, 4.56") }
+    end
+
+    context do
+      let(:str) { "-12.3 :  4.56" }
+      it { is_expected.to eq("-12.3, 4.56") }
+    end
+
+    context do
+      let(:str) { "-12.33875295723;-4.56294385279484" }
+      it { is_expected.to eq("-12.338752, -4.562943") }
+    end
+
+    context do
+      let(:str) { "12 4" }
+      it { is_expected.to eq("12.0, 4.0") }
+    end
+  end
+
+  context "with coordinates" do
+    it "should require both latitude and longitude if either are present" do
+      # check each field with the other missing
+      %i[latitude longitude].each do |field|
+        option = build(:option, field => 0)
+        expect(option).to be_invalid
       end
 
-      it 'should have no recent changes' do
-        expect(@option.recent_changes).to be_nil
+      # check with the both present
+      option = create(:option, latitude: 0, longitude: 0)
+      expect(option).to be_valid
+    end
+
+    it "should reject out-of-range latitudes" do
+      [-100, 100].each do |value|
+        option = build(:option, latitude: value, longitude: 0)
+        expect(option).to be_invalid
       end
     end
 
-    context 'with flag set' do
-      before do
-        allow(@option).to receive(:capturing_changes?).and_return(true)
-        @option.update_attributes!(name: 'Baz')
+    it "should reject out-of-range longitudes" do
+      [-200, 200].each do |value|
+        option = build(:option, latitude: 0, longitude: value)
+        expect(option).to be_invalid
       end
+    end
+  end
 
-      it 'should have an entry for name_translations' do
-        expect(@option.recent_change_for('name_translations')).to eq [{"en"=>"Foo"}, {"en"=>"Baz"}]
-      end
+  context "coordinates?" do
+    it "should return true if there are full coordinates" do
+      option = build(:option, latitude: 0, longitude: 0)
+      expect(option.coordinates?).to be(true)
+    end
+
+    it "should return true if there are partial coordinates" do
+      option = build(:option, latitude: 0)
+      expect(option.coordinates?).to be(true)
+    end
+
+    it "should return false if there are no coordinates" do
+      option = build(:option)
+      expect(option.coordinates?).to be(false)
     end
   end
 end

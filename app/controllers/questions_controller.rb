@@ -1,24 +1,22 @@
 class QuestionsController < ApplicationController
-  include StandardImportable
+  PER_PAGE = 25
+
+  include StandardImportable, Searchable, BatchProcessable
+
+  include Parameters
+  include Storage
 
   # this Concern includes routines for building question/ing forms
   include QuestionFormable
 
   load_and_authorize_resource
+  skip_authorize_resource only: :audio_prompt
 
   def index
-    @questions = @questions.with_assoc_counts.by_code.paginate(:page => params[:page], :per_page => 25)
+    @questions = apply_search_if_given(Question, @questions)
+    @tags = Tag.mission_tags(@current_mission)
+    @questions = @questions.includes(:tags).by_code.paginate(page: params[:page], per_page: PER_PAGE)
     load_importable_objs
-
-    # do search if applicable
-    if params[:search].present?
-      begin
-        @questions = Question.do_search(@questions, params[:search])
-      rescue Search::ParseError
-        flash.now[:error] = $!.to_s
-        @search_error = true
-      end
-    end
   end
 
   def show
@@ -34,12 +32,27 @@ class QuestionsController < ApplicationController
   end
 
   def create
+    @question.is_standard = true if current_mode == 'admin'
+
+    permitted_params = question_params
+
+    # Convert tag string from TokenInput to array
+    @question.tag_ids = (permitted_params[:tag_ids] || '').split(',')
+
+    # Convert tags_attributes hidden inputs to create new tags (why doesn't this happen automatically here?)
+    @question.tags_attributes = permitted_params[:tags_attributes] || []
+
     create_or_update
   end
 
   def update
+    permitted_params = question_params
+
+    # Convert tag string from TokenInput to array
+    permitted_params[:tag_ids] = permitted_params[:tag_ids].split(',')
+
     # assign attribs and validate now so that normalization runs before authorizing and saving
-    @question.assign_attributes(params[:question])
+    @question.assign_attributes(permitted_params)
     @question.valid?
 
     # authorize special abilities
@@ -51,24 +64,48 @@ class QuestionsController < ApplicationController
 
   def destroy
     destroy_and_handle_errors(@question)
-    redirect_to(index_url_with_page_num)
+    redirect_to(index_url_with_context)
+  end
+
+  def bulk_destroy
+    @questions = restrict_by_search_and_ability_and_selection(@questions, Question)
+    result = QuestionDestroyer.new(scope: @questions, ability: current_ability).destroy!
+    success = []
+    success << t("question.bulk_destroy_deleted", count: result[:destroyed]) if result[:destroyed].positive?
+    success << t("question.bulk_destroy_skipped", count: result[:skipped]) if result[:skipped].positive?
+    flash[:success] = success.join(" ") unless success.empty?
+    redirect_to(questions_path)
+  end
+
+  def audio_prompt
+    authorize!(:show, @question)
+
+    decorated_question = Odk::QuestionDecorator.decorate(@question)
+
+    send_attachment(decorated_question.audio_prompt,
+      filename: decorated_question.unique_audio_prompt_filename)
   end
 
   private
-    # creates/updates the question
-    def create_or_update
-      if @question.save_and_rereplicate
-        set_success_and_redirect(@question)
-      else
-        flash.now[:error] = I18n.t('activerecord.errors.models.question.general')
-        prepare_and_render_form
-      end
-    end
 
-    # prepares objects for and renders the form template
-    def prepare_and_render_form
-      # this method lives in the QuestionFormable concern
-      setup_question_form_support_objs
-      render(:form)
+  # creates/updates the question
+  def create_or_update
+    if @question.save
+      set_success_and_redirect(@question)
+    else
+      flash.now[:error] = I18n.t('activerecord.errors.models.question.general')
+      prepare_and_render_form
     end
+  end
+
+  # prepares objects for and renders the form template
+  def prepare_and_render_form
+    # this method lives in the QuestionFormable concern
+    setup_question_form_support_objs
+    render(:form)
+  end
+
+  def question_params
+    params.require(:question).permit(whitelisted_question_params(params[:question]))
+  end
 end

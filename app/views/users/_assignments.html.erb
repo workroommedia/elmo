@@ -1,38 +1,23 @@
 <% if admin_mode? %>
-
-  <%# special error output %>
-  <%= content_tag(:div, assignment_errors.join(' '), :class => 'form-errors') unless assignment_errors.empty? %>
-
-  <div class="assignment_header">
-    <div class="mission"><%= translate_model(Mission) %></div>
-    <div class="role"><%= t('role.role') %></div>
-  </div>
-
-  <div class="assignments"></div>
-
-  <%= link_to(t('user.add_assignment'), '#', :class => 'add_assignment') unless read_only %>
-
+  <%= render "users/admin_assignments" %>
 <% else %>
-
   <% if read_only || cannot?(:change_assignments, @user) %>
-
     <%# in show mode, just show the role the current mission's assignment %>
-    <%= @current_assignment.role ? t(@current_assignment.role, :scope => :role) : t('common.none') %>
-
+    <%= @current_assignment.role ? t(@current_assignment.role, scope: :role) : t("common.none") %>
   <% else %>
-
-    <%# don't show errors because we format them specially below %>
-    <%= elmo_fields_for("user[assignments_attributes][0]", @current_assignment, :show_errors => false) do |af| %>
+    <%= elmo_fields_for("user[assignments_attributes][0]", @current_assignment) do |af| %>
       <%= af.hidden_field(:id) %>
+
+      <%# Ok to have this here because we know the user has change_assignments privileges. %>
       <%= af.hidden_field(:mission_id) %>
 
       <%# special error output %>
-      <%= content_tag(:div, @user.errors[:'assignments.role'].join, :class => 'form-errors') unless @user.errors[:'assignments.role'].empty? %>
+      <% unless @user.errors[:"assignments.role"].empty? %>
+        <%= content_tag(:div, @user.errors[:"assignments.role"].join, class: "form-errors") %>
+      <% end %>
 
-      <%= af.select(:role, User::ROLES.map{|r| [t(r, :scope => :role), r]}, {:prompt => "[#{t('role.role')}]"},
-        :class => "form-control") %>
+      <%= af.select(:role, User::ROLES.map { |r| [t(r, scope: :role), r] },
+                    {prompt: "[#{t("role.blank")}]"}, class: "form-control") %>
     <% end %>
-
-  <% end # if show mode %>
-
-<% end # if admin mode %>
+  <% end %>
+<% end %>

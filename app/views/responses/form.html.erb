@@ -1,57 +1,63 @@
-<%# load the mapping API %>
-<% content_for(:per_page_js){ javascript_include_tag("https://maps.googleapis.com/maps/api/js?sensor=false") } %>
+<% content_for(:per_page_js, javascript_google_maps) %>
+<% @title_args = {id: @response.decorate.shortcode} %>
 
-<%# title includes ID if defined %>
-<% @title_args = {:id => @response.id} %>
-
-<%= render("layouts/location_picker") %>
-
-<% @response.answers.collect{|a| a.errors.full_messages.join(", ")}.join(" ") %>
-
-<%= elmo_form_for(@response) do |f| %>
-
-  <%= top_action_links(@response, :except => :new) %>
-
-  <%= f.field(:form_id, :type => :hidden) %>
-
-  <%# form name %>
-  <%= f.field(:form_id, :content => link_to(@response.form.name, @response.form)) %>
-
-  <%# if the user can't manage the response, then don't show the submitter box as a dropdown %>
-  <%= f.field(:user_id, :type => :select, :required => true, :options => sel_opts_from_objs(@possible_submitters),
-    :read_only => cannot?(:manage, @response),
-
-    # some users are not linkable currently if they're not assigned to the mission
-    # if we give nil read_only_content then it will revert to the default read only content
-    :read_only_content => can?(:read, @response.user) ? link_to(@response.user.try(:name), @response.user) : nil) %>
-
-  <%# don't show source or reviewed if new obj %>
-  <% unless form_mode == :new %>
-
-    <%= f.field(:source) if read_only %>
-
-    <%# only show the reviewed checkbox as editable if the user can review the response %>
-    <%= f.field(:reviewed, :type => :check_box, :read_only => cannot?(:review, @response)) %>
-
-  <% end %>
-
-  <%# render all the answers %>
-  <%= render(partial: 'answer_set', collection: @response.answer_sets) %>
-
-  <%# incomplete checkbox %>
-  <%= f.field(:incomplete, :type => :check_box) if can?(:submit_incomplete, @response) %>
-
-  <div class ="submit-buttons">
-    <%= f.submit(:class => "btn btn-primary") %>
-    <% if form_mode == :edit && can?(:review, @response) %>
-      <%= f.submit(t('response.save_and_mark_reviewed'), :class => "btn btn-primary", :name => 'commit_and_mark_reviewed') %>
-    <% end %>
-  </div>
-
-
+<%# This needs to be up here so it runs before the FileUploaderViews are initialized. %>
+<%= javascript_doc_ready do %>
+  ELMO.fileUploaderManager = new ELMO.Views.FileUploaderManager({el: ".response-form"});
 <% end %>
 
+<div id="response-form-wrapper">
+  <%= elmo_form_for(@response, read_only: @read_only, override_class: "response-form") do |f| %>
+    <%= top_action_links(@response, :except => :new) %>
+    <%= f.base_errors %>
+    <%= f.field(:form_id, type: :hidden) %>
+
+    <%= render("metadata", f: f, context: @context) %>
+    <%= render("responses/answers/nodes", nodes: [@response.root_node], context: @context) %>
+
+    <div class="row">
+      <div class="col-sm-6">
+        <% if @context.read_only? %>
+          <% if @response.incomplete %>
+            <div class="answer">
+              <div data-field-name="incomplete">
+                <div class="hint-wrapper">
+                  <div class="hint">
+                    <em>This is an incomplete response</em>
+                    <i class="hint fa fa-2x fa-info-circle"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+          <% end %>
+        <% else %>
+          <%= f.field(:incomplete, type: :check_box) if can?(:submit_incomplete, @response) %>
+        <% end %>
+      </div>
+      <div class="col-sm-6">
+        <div class="submit-buttons">
+          <% if form_mode == :edit && can?(:review, @response) %>
+            <%= f.submit(t("response.save_and_mark_reviewed"),
+                  class: "btn btn-default", name: "commit_and_mark_reviewed", read_only: false) %>
+          <% end %>
+          <% unless @context.read_only? %>
+            <%= f.submit(class: "btn btn-primary") %>
+          <% end %>
+          <%= render("file_upload/upload_in_progress_button", single_file: false) %>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+  <%= render("layouts/location_picker") %>
+</div>
+
 <%= javascript_doc_ready do %>
-  ELMO.Response.init();
-  $('textarea').each(function(){ CKEDITOR.replace(this.id); });
+  new ELMO.Views.ResponseFormView(<%=json(
+    el: "#response-form-wrapper",
+    submitter_url: @response.new_record? ? possible_users_new_response_path(search_mode: "submitters") :
+      possible_users_response_path(@response, search_mode: "submitters"),
+    reviewer_url: @response.new_record? ? possible_users_new_response_path(search_mode: "reviewers") :
+      possible_users_response_path(@response, search_mode: "reviewers")
+  )%>);
 <% end %>

@@ -1,29 +1,34 @@
-<tr<%= qing.condition ? " class=\"conditional\"".html_safe : "" %>>
+<tr class="question depth <%= "depth-#{qing.depth}" %><%= qing.display_conditionally? ? ' conditional' : '' %>">
   <td class="name">
-    <% if qing.condition %>
-      <div class="condition"><%= t("question.answer_only_caps") %> <%= qing.condition.to_s %></div>
+    <% if qing.display_conditionally?%>
+      <div class="condition">
+        <%= t("question.answer_only_caps") %>
+        <%= qing.decorate.concatenated_conditions %></div>
     <% end %>
-    <div class="name">
-      <%= qing.rank %>. <%= reqd_sym if qing.required? %>
-      <%= qing.question.name %>
-    </div>
-    <% unless qing.question.hint.empty? %>
-      <div class="hint"><%= qing.question.hint %></div>
+    <div class="name"><%= qing.name_and_rank %></div>
+    <% unless qing.hint.blank? %>
+      <div class="hint"><%= qing.hint %></div>
     <% end %>
   </td>
   <td class="answer <%= qing.qtype_name %>_answer">
     <% # print options if necessary %>
     <% if qing.has_options? %>
+      <%= qing.selection_instructions %>
       <% qing.options.each do |opt| %>
         <div class="option">
           <div class="option_box"></div>
           <%= opt.name %>
         </div>
       <% end %>
-
-    <%# For long text types, the box should be the whole cell. %>
-    <% elsif qing.qtype_name != 'long_text' %>
+    <% else %>
       <div class="answer_box"></div>
     <% end %>
   </td>
 </tr>
+<% qing.skip_rules.each do |rule| %>
+  <tr class="depth <%= "depth-#{qing.depth}" %>">
+    <td colspan="2" class="skip-rule name">
+      <%= SkipRuleDecorator.new(rule).human_readable %>
+    </td>
+  </tr>
+<% end %>

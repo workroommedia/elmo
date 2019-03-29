@@ -1,5 +1,5 @@
 <div id="printable_form" class="printable">
-  <%= image_tag("logo-dark.png", class: 'logo') %>
+  <%= logo_image(style: :dark, class: "logo") %>
   <h1 class="title"><%= title(name_only: true) %></h1>
   <div class="mission"><%= current_mission.try(:name) || "[#{t('form.no_mission')}]" %></div>
   <table>
@@ -11,8 +11,7 @@
       <td class="name"><%= t("response.observation_time") %></td>
       <td class="answer text_answer"><div class="answer_box"></div></td>
     </tr>
-    <% form.visible_questionings.select(&:printable?).each do |qing| %>
-      <%= render("questionings/printable", :qing => qing) %>
-    <% end %>
+
+    <%= render 'form_items/printable', items: form.visible_children %>
   </table>
 </div>

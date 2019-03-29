@@ -2,12 +2,13 @@ module OptionSetsHelper
   def option_sets_index_links(option_sets)
     links = []
     links << create_link(OptionSet) if can?(:create, OptionSet)
+    links << create_link(OptionSetImport) if can?(:create, OptionSetImport)
     add_import_standard_link_if_appropriate(links)
     links
   end
 
   def option_sets_index_fields
-    %w(std_icon name options questions answers published actions)
+    %w(std_icon name options) + (admin_mode? ? [] : ['published']) + ['actions']
   end
 
   def format_option_sets_field(option_set, field)
@@ -18,7 +19,7 @@ module OptionSetsHelper
     when "options" then
       # only show the first 3 options as there could be many many
       option_set.options[0...3].collect{|o| o.name}.join(", ") + (option_set.options.size > 3 ? ', ...' : '')
-    when "questions" then option_set.question_count
+    when "questions" then option_set.questions_count
     when "answers" then number_with_delimiter(option_set.answer_count)
     when "actions" then
       # get standard action links
@@ -27,15 +28,21 @@ module OptionSetsHelper
       # add a clone link if auth'd
       if can?(:clone, option_set)
         links += action_link("clone", clone_option_set_path(option_set), :'data-method' => 'put',
-          :title => t("common.clone"), :confirm => t("option_set.clone_confirm", :name => option_set.name))
+          :title => t("common.clone"), data: {confirm: t("option_set.clone_confirm", :name => option_set.name)})
       end
     else option_set.send(field)
     end
   end
 
-  def multi_level_forbidden_notice
-    text = tmd('option_set.multi_level_forbidden_notice')
+  def multilevel_forbidden_notice
+    text = tmd('option_set.multilevel_forbidden_notice')
     icon = content_tag(:i, '', class: 'fa fa-exclamation-triangle')
-    content_tag(:div, (icon + content_tag(:div, text)).html_safe, class: "form-warning alert alert-info")
+    content_tag(:div, (icon << content_tag(:div, text)), class: "form-warning alert alert-info")
+  end
+
+  def huge_notice
+    text = tmd('option_set.huge_notice', count: number_with_delimiter(@option_set.total_options))
+    icon = content_tag(:i, '', class: 'fa fa-exclamation-triangle')
+    content_tag(:div, (icon << content_tag(:div, text)), class: "form-warning alert alert-info")
   end
 end

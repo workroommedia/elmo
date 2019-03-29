@@ -1,65 +1,48 @@
-class Option < ActiveRecord::Base
-  include MissionBased, FormVersionable, Translatable, Standardizable, Replicable, RecentChangeable
+# frozen_string_literal: true
 
-  has_many(:option_sets, :through => :option_nodes)
-  has_many(:option_nodes, :inverse_of => :option, :dependent => :destroy, :autosave => true)
-  has_many(:answers, :inverse_of => :option)
-  has_many(:choices, :inverse_of => :option)
-  has_many(:conditions, :inverse_of => :option)
+# A single selectable option in an OptionSet for a select question.
+class Option < ApplicationRecord
+  include Replication::Replicable
+  include Translatable
+  include FormVersionable
+  include MissionBased
 
-  after_save(:invalidate_cache)
-  after_destroy(:invalidate_cache)
+  MAX_NAME_LENGTH = 255
+  LAT_LNG_REGEXP = /^(-?\d+(\.\d+)?)\s*[,;:\s]\s*(-?\d+(\.\d+)?)/
 
-  scope(:with_questions_and_forms, includes(:option_sets => [:questionings, {:questions => {:questionings => :form}}]))
+  has_many :option_nodes, -> { order(:rank) }, inverse_of: :option, dependent: :destroy, autosave: true
+  has_many :option_sets, through: :option_nodes
+  has_many :answers, inverse_of: :option, dependent: :restrict_with_exception
+  has_many :choices, inverse_of: :option, dependent: :restrict_with_exception
 
-  translates :name, :hint
+  before_validation :normalize
+  after_save :invalidate_cache
+  after_save :touch_answers_choices
+  after_destroy :invalidate_cache
 
-  replicable :parent_assoc => :option_node, :user_modifiable => [:name_translations, :_name, :hint_translations, :_hint]
+  scope :with_questions_and_forms,
+    -> { includes(option_sets: [:questionings, questions: {questionings: :form}]) }
+  scope :by_canonical_name, ->(name) { where("LOWER(canonical_name) = ?", name.downcase) }
 
-  MAX_SUGGESTIONS = 5 # The max number of suggestion matches to return
-  MAX_NAME_LENGTH = 45
+  translates :name
 
-  # Returns an array of Options matching the given mission and textual query.
-  def self.suggestions(mission, query)
-    # fetch all mission options from the cache
-    mission_id = mission ? mission.id : 'std'
-    options = Rails.cache.fetch("mission_options/#{mission_id}", :expires_in => 2.minutes) do
-      Option.unscoped.includes(:option_sets).for_mission(mission).all
-    end
-
-    # Trim query to maximum length.
-    query = query[0...MAX_NAME_LENGTH]
-
-    # scan for options matching query
-    matches = []; exact_match = false
-    for i in 0...options.size
-      # if we have a a partial match
-      if options[i].name && options[i].name =~ /#{Regexp.escape(query)}/i
-        # if also an exact match, set a flag and put it at the top
-        if options[i].name =~ /^#{Regexp.escape(query)}$/i
-          matches.insert(0, options[i])
-          exact_match = true
-        # otherwise just insert at the end
-        else
-          matches << options[i]
-        end
-      end
-    end
-
-    # trim results to max size (couldn't do this earlier b/c had to search whole list for exact match)
-    matches = matches[0...MAX_SUGGESTIONS]
-
-    # if there was no exact match, we append a 'new option' placeholder
-    unless exact_match
-      matches << Option.new(:name => query)
-    end
-
-    matches
+  validate :check_invalid_coordinates_flag
+  with_options if: :coordinates? do
+    validates :latitude, numericality: {greater_than_or_equal_to: -90, less_than_or_equal_to: 90}
+    validates :longitude, numericality: {greater_than_or_equal_to: -180, less_than_or_equal_to: 180}
   end
 
-  def published?; !option_sets.detect{|os| os.published?}.nil?; end
+  # We re-use options on replicate if they have the same canonical_name as the option being imported.
+  # Options are not standardizable so we don't track the original_id (that would be overkill).
+  replicable reuse_if_match: :canonical_name
 
-  def questions; option_sets.collect{|os| os.questions}.flatten.uniq; end
+  def published?
+    option_sets.any?(&:published?)
+  end
+
+  def questions
+    option_sets.map(&:questions).flatten.uniq
+  end
 
   def has_answers?
     !answers.empty?
@@ -69,9 +52,13 @@ class Option < ActiveRecord::Base
     !choices.empty?
   end
 
+  def coordinates?
+    latitude.present? || longitude.present?
+  end
+
   # returns all forms on which this option appears
   def forms
-    option_sets.collect{|os| os.questionings.collect(&:form)}.flatten.uniq
+    option_sets.map { |os| os.questionings.map(&:form) }.flatten.uniq
   end
 
   # returns whether this option is in use -- is referenced in any answers/choices AND/OR is published
@@ -81,12 +68,37 @@ class Option < ActiveRecord::Base
 
   # gets the names of all option sets in which this option appears
   def set_names
-    option_sets.map{|os| os.name}.join(', ')
+    option_sets.map(&:name).join(", ")
+  end
+
+  # Returns an Option in the given mission that has same canonical name as this Option.
+  # Returns nil if not found.
+  def similar_for_mission(other_mission)
+    self.class.find_by(canonical_name: canonical_name, mission_id: other_mission&.id)
+  end
+
+  def coordinates
+    "#{latitude}, #{longitude}" if coordinates?
+  end
+
+  def coordinates=(value)
+    @_invalid_coordinates_flag = false
+
+    if value.blank?
+      self.latitude = nil
+      self.longitude = nil
+    elsif (match = value.match(LAT_LNG_REGEXP))
+      self.latitude = match[1].to_d.truncate(6)
+      self.longitude = match[3].to_d.truncate(6)
+    else
+      @_invalid_coordinates_flag = true
+    end
   end
 
   def as_json(options = {})
     if options[:for_option_set_form]
-      super(:only => [:id, :name_translations], :methods => [:name, :set_names, :in_use?])
+      super(only: %i[id latitude longitude name_translations value],
+            methods: %i[name set_names in_use?])
     else
       super(options)
     end
@@ -94,8 +106,31 @@ class Option < ActiveRecord::Base
 
   private
 
-    # invalidate the mission option cache after save, destroy
-    def invalidate_cache
-      Rails.cache.delete("mission_options/#{mission_id}")
-    end
+  def normalize
+    return unless value.is_a?(String)
+    value.strip!
+    self.value = numeric?(value) ? value.to_i : nil
+  end
+
+  def numeric?(str)
+    Float(str)
+    true
+  rescue ArgumentError
+    false
+  end
+
+  # invalidate the mission option cache after save, destroy
+  def invalidate_cache
+    Rails.cache.delete("mission_options/#{mission_id}")
+  end
+
+  # Touch these objects so the search index is updated.
+  def touch_answers_choices
+    answers.each(&:touch)
+    choices.each(&:touch)
+  end
+
+  def check_invalid_coordinates_flag
+    errors.add(:coordinates, :invalid_coordinates) if @_invalid_coordinates_flag
+  end
 end

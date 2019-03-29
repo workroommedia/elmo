@@ -1,7 +1,12 @@
-<div id="option-levels-wrapper" class="draggable-list-wrapper"></div>
+<div id="option-levels-wrapper" class="draggable-list-wrapper" style="display: none"></div>
 
-<% unless read_only %>
-  <%= link_to(t('option_set.add_level'), '#', class: 'add-link') if can?(:add_options, @option_set) %>
+<% unless read_only || @option_set.huge? %>
+  <% if can?(:add_options, @option_set) %>
+    <span class="action">
+      <%= icon_tag(:plus) %>
+      <%= link_to(t('option_set.add_level'), '#', class: 'add-link') %>
+    </span>
+  <% end %>
 
   <%# edit option level modal %>
   <div class="modal fade edit-named-item" id="edit-option-level" tabindex="-1" role="dialog" aria-labelledby="editOptionLevel" aria-hidden="true">
@@ -16,10 +21,14 @@
           <%= data_integrity_warning(:option_standard_copy_name_change_warning) if @option_set.standard_copy? %>
 
           <% configatron.preferred_locales.each do |locale| %>
-            <div class="translation">
-              <label for="option_level_name_<%= locale %>"><%= language_name(locale) %></label>
-              <input type="text" class="form-control" id="option_level_name_<%= locale %>"
-                data-locale="<%= locale %>" maxlength="<%= OptionLevel::MAX_NAME_LENGTH %>">
+            <div class="translation form-horizontal">
+              <div class="form-group">
+                <label for="option_level_name_<%= locale %>" class="col-sm-3 control-label"><%= language_name(locale) %></label>
+                <div class="col-sm-9">
+                  <input type="text" class="form-control" id="option_level_name_<%= locale %>"
+                    data-locale="<%= locale %>" maxlength="<%= OptionLevel::MAX_NAME_LENGTH %>">
+                </div>
+              </div>
             </div>
           <% end %>
 

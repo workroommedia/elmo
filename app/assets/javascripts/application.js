@@ -10,34 +10,47 @@
 // WARNING: THE FIRST BLANK LINE MARKS THE END OF WHAT'S TO BE PROCESSED, ANY BLANK LINE SHOULD
 // GO AFTER THE REQUIRES BELOW.
 
+// Vendor
 //= require core_ext/array
 //= require core_ext/string
 //= require core_ext/object
 //= require jquery
 //= require jquery_ujs
-//= require jquery-ui-1.10.3.custom
+//= require jquery-ui-1.12.1-custom
+//= require jquery-fileupload/basic-plus
 //= require jquery.tokeninput
-//= require jquery.mjs.nestedSortable-1.3.5
+//= require jquery.mjs.nestedSortable-2.0
 //= require jquery.spin
-//= require core_ext/jquery_ext
-//= require common
 //= require underscore
 //= require backbone
 //= require backbone_rails_sync
 //= require backbone_datalink
-//= require backbone/elmo/
-//= require sassafras/utils
 //= require i18n
 //= require i18n/translations
 //= require bootstrap
 //= require bootstrap-modal
 //= require bootstrap-modalmanager
+//= require dropzone
+//= require select2
+//= require trumbowyg/trumbowyg
+//= require trumbowyg/langs/ar.min
+//= require trumbowyg/langs/es.min
+//= require trumbowyg/langs/fr.min
+//= require trumbowyg/langs/ko.min
 
-// some report superclasses need to come first due to inheritance
-//= require views/control/control
-//= require controllers/report/report_controller
-//= require models/report/object_menu
-//= require views/report/display
-//= require views/report/edit_pane
+// Global
+//= require core_ext/jquery_ext
+//= require legacy/common
+//= require sassafras/utils
 
-//= require_tree .
+// Superclasses that need to come first due to inheritance
+//= require legacy/views/control/control
+//= require legacy/controllers/report/report_controller
+//= require legacy/models/report/object_menu
+//= require legacy/views/report/display
+//= require legacy/views/report/edit_pane
+//= require views/application_view
+//= require views/form_view
+
+// Everything else
+//= require_tree ./

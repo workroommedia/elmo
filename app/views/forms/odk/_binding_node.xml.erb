@@ -1,0 +1,12 @@
+<% node = Odk::DecoratorFactory.decorate(node, context: {condition_computer: @condition_computer}) %>
+<% if node.is_a?(Questioning) %>
+  <% node.subqings.each do |subq| %>
+    <%= node.bind_tag(@form, subq, xpath_prefix: xpath_prefix) %>
+  <% end %>
+<% else %>
+  <%= node.bind_tag(xpath_prefix: xpath_prefix) %>
+  <%= node.note_bind_tag(xpath_prefix: xpath_prefix) %>
+  <% node.sorted_children.each do |child| %>
+    <%= render "forms/odk/binding_node", node: child, parent: node, xpath_prefix: node.xpath(xpath_prefix) %>
+  <% end %>
+<% end %>

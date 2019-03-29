@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe 'router' do
   it 'routes root with locale' do
@@ -19,10 +19,6 @@ describe 'router' do
 
   it 'routes logout without locale' do
     expect(:delete => '/en/logout').to route_to(:controller => 'user_sessions', :action => 'destroy', :locale => 'en', :mode => nil, :mission_name => nil)
-  end
-
-  it 'routes proxy requests without locale' do
-    expect(:get => '/proxies/geocoder').to route_to(:controller => 'proxies', :action => 'geocoder')
   end
 
   it 'routes edit profile' do

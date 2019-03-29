@@ -12,26 +12,23 @@ module MissionBased
 
     # add scope
     base.class_eval do
-
       # only Setting has a has_one association, so don't pluralize
-      inverse = (base.model_name == "Setting" ? base.model_name : base.model_name.plural).downcase.to_sym
+      inverse = (base.model_name == "Setting" ? base.model_name.to_s : base.model_name.plural).downcase.to_sym
       belongs_to(:mission, :inverse_of => inverse)
 
       # scope to find objects with the given mission
       # mission can be nil
       scope(:for_mission, lambda{|m| where(:mission_id => m.try(:id))})
+      scope(:for_mission_id, lambda{|m| where(:mission_id => m)})
 
+      # DEPRECATED: This should go away and be replaced with use of destroy and a background job.
+      # No need to maintain all this extra logic. Mission delete happens rarely and can be slow.
       # when a mission is deleted, pre-remove all records related to a mission
       def self.mission_pre_delete(mission)
-        mission_related = self.where(mission_id:mission)
-
-        if self.respond_to?(:terminate_sub_relationships)
-          self.terminate_sub_relationships(mission_related.pluck(:id))
-        end
-
-        mission_related.delete_all
+        scope = where(mission_id: mission)
+        terminate_sub_relationships(scope.pluck(:id)) if respond_to?(:terminate_sub_relationships)
+        scope.delete_all
       end
-
     end
 
     # checks if this object is unique in the mission according to the attrib given by attrib_name

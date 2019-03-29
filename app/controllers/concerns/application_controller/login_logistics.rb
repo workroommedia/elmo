@@ -14,7 +14,7 @@ module Concerns::ApplicationController::LoginLogistics
 
   # Tasks that should be run after the user successfully logs in OR successfully resets their password
   # Redirects to the appropriate place.
-  def post_login_housekeeping
+  def post_login_housekeeping(options = {})
     # Get the session
     @user_session = UserSession.find
 
@@ -22,12 +22,14 @@ module Concerns::ApplicationController::LoginLogistics
     @user_session.user.reset_perishable_token!
 
     # Set the locale based on the user's pref_lang (if it's supported)
-    pref_lang = @user_session.user.pref_lang.to_sym
-    I18n.locale = configatron.full_locales.include?(pref_lang) ? pref_lang : I18n.default_locale
+    set_locale_or_default(@user_session.user.pref_lang)
 
-    # Redirect.
+    return if options[:dont_redirect]
+
+    # Redirect to most relevant mission
     best_mission = @user_session.user.best_mission
-    redirect_back_or_default best_mission ? mission_root_path(mission_name: best_mission.compact_name) : basic_root_path
+    redirect_back_or_default(best_mission ?
+      mission_root_path(mission_name: best_mission.compact_name) : basic_root_path)
   end
 
   # resets the Rails session but preserves the :return_to key
@@ -44,7 +46,7 @@ module Concerns::ApplicationController::LoginLogistics
   def redirect_to_login
     if request.xhr?
       flash[:error] = nil
-      render(:text => "LOGIN_REQUIRED", :status => 401)
+      render(plain: "LOGIN_REQUIRED", status: :unauthorized)
     else
       store_location
       redirect_to(login_url)

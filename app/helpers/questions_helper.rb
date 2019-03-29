@@ -17,6 +17,12 @@ module QuestionsHelper
       # add the create new question
       links << create_link(Question) if can?(:create, Question)
 
+      links << batch_op_link(
+        name: t("question.bulk_destroy"),
+        path: bulk_destroy_questions_path,
+        confirm: "question.bulk_destroy_confirm"
+      )
+
       add_import_standard_link_if_appropriate(links)
     end
 
@@ -25,7 +31,9 @@ module QuestionsHelper
   end
 
   def questions_index_fields
-    fields = %w(std_icon code name type form_count answer_count published)
+    fields = %w(std_icon code name type)
+
+    fields << 'published' unless admin_mode?
 
     # dont add the actions column if we're not in the forms controller, since that means we're probably in form#choose_questions
     fields << 'actions' unless params[:controller] == 'forms'
@@ -38,18 +46,26 @@ module QuestionsHelper
     when "std_icon" then std_icon(q)
     when "type" then t(q.qtype_name, :scope => :question_type)
     when "published" then tbool(q.published?)
-    when "answer_count" then number_with_delimiter(q.answer_count)
     when "actions" then table_action_links(q)
     when "name"
-      params[:controller] == 'forms' ? q.name : link_to(q.name, q)
+      if params[:controller] == 'forms'
+        html_escape(q.name_or_none) << render_tags(q.sorted_tags)
+      else
+        link_to(q.name_or_none, q) + render_tags(q.sorted_tags, clickable: true)
+      end
     else q.send(field)
     end
   end
 
   # Builds option tags for the given option sets. Adds multilevel data attrib.
+  # If no option sets found, returns empty string.
   def option_set_select_option_tags(sets, selected_id)
     sets.map do |s|
-      content_tag(:option, s.name, value: s.id, selected: s.id == selected_id ? 'selected' : nil, :'data-multilevel' => s.multi_level?)
-    end.join.html_safe
+      content_tag(:option, s.name, value: s.id, selected: s.id == selected_id ? 'selected' : nil, :'data-multilevel' => s.multilevel?)
+    end.reduce(:<<) || ""
+  end
+
+  def maxmin_strictly_label(method)
+    t("question.maxmin.strictly_" + (method == :casted_minimum ? "gt" : "lt"))
   end
 end

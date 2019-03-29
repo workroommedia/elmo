@@ -6,15 +6,10 @@
 # Example:
 #
 set :output, "log/cron.log"
-set :environment, ENV['RAILS_ENV']
+env :PATH, ENV["PATH"]
+env :GEM_HOME, ENV["GEM_HOME"]
 
-# define a job type to run the per-server railsenv script
-job_type :rake_with_env, "cd :path && source config/railsenv && RAILS_ENV=:environment bundle exec rake :task --silent :output"
-
-every 1.hour do
-  # redo the indexes
-  rake_with_env "ts:index"
-
-  # make sure the daemon is running
-  rake_with_env "ts:start"
+# Every 6 hours, at half past
+every "30 */6 * * *" do
+  runner "CleanupJob.perform_later"
 end

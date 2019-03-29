@@ -42,9 +42,6 @@
     // prevent double submission of any forms on the page
     $('form').preventDoubleSubmission();
 
-    // hookup hint tooltips if any on the page
-    self.hookup_hints();
-
     self.set_alert_timeout();
   }
 
@@ -88,11 +85,11 @@
       if (link.next('ul').is(':hidden')) link.dropdown('toggle');
 
       // show loading ind
-      link.next('ul').find('div.loading_indicator img').show();
+      link.next('ul').find('div.inline-load-ind img').show();
 
       link.next('ul').load(self.url_builder.build('forms') + '?dropdown=1', function() {
         // hide loading ind
-        link.next('ul').find('div.loading_indicator img').hide();
+        link.next('ul').find('div.inline-load-ind img').hide();
       });
 
     }
@@ -132,27 +129,6 @@
   // hides any success alerts after a delay
   klass.prototype.set_alert_timeout = function() { var self = this;
     window.setTimeout(function() {$(".alert-success").slideUp(); return false;}, 4000);
-  };
-
-  klass.prototype.hookup_hints = function() { var self = this;
-
-    // when click on the page, hints disappear
-    $('html').on('click', function(e) {
-      $('a.hint').popover('hide');
-    });
-
-    // initialize popovers
-    $('a.hint').popover({
-      html: true,
-      trigger: 'manual'
-    // toggle current tooltip
-    }).on('click', function(e) {
-      // hide previous hints
-      $('a.hint').popover('hide');
-      $(this).popover('toggle');
-      e.stopPropagation();
-      e.preventDefault();
-    });
   };
 
   // Shows/hides loading indicator.

@@ -15,6 +15,8 @@ class Report::QuestionSummary
   attr_reader :display_type
   attr_reader :overall_header
 
+  delegate :reference, to: :questioning
+
   def initialize(attribs)
     # save attribs
     attribs.each{|k,v| instance_variable_set("@#{k}", v)}
@@ -38,8 +40,7 @@ class Report::QuestionSummary
     h = super(options)
     h[:questioning] = questioning.as_json(
       :only => [:id, :rank],
-      :methods => [:code, :name, :referring_condition_ranks],
-      :include => {:condition => {:only => [], :methods => :to_s}}
+      :methods => [:code, :name]
     )
     h[:items] = items
     h[:null_count] = null_count

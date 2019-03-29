@@ -1,7 +1,7 @@
 class Sms::Adapters::FrontlineSmsAdapter < Sms::Adapters::Adapter
 
-  def self.recognize_receive_request?(params)
-    %w(from text frontline) - params.keys == []
+  def self.recognize_receive_request?(request)
+    %w(from text frontline) - request.params.keys == []
   end
 
   def self.can_deliver?
@@ -16,12 +16,20 @@ class Sms::Adapters::FrontlineSmsAdapter < Sms::Adapters::Adapter
     raise NotImplementedError
   end
 
-  def receive(params)
-    Sms::Message.create(
-      :direction => 'incoming',
-      :from => params['from'],
-      :body => params['text'],
-      :sent_at => Time.zone.now, # Frontline doesn't supply this
-      :adapter_name => service_name)
+  def receive(request)
+    params = request.params
+    Sms::Incoming.new(
+      from: params['from'],
+      to: nil, # Frontline doesn't provide this.
+      body: params['text'],
+      sent_at: Time.zone.now, # Frontline doesn't supply this
+      adapter_name: service_name)
+  end
+
+  def validate(request)
+  end
+
+  def response_body(reply)
+    reply.body
   end
 end

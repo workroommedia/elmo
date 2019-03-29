@@ -4,12 +4,7 @@ module DataIntegrityHelper
   def published_warning(obj)
     type = obj.class.model_name.singular
 
-    # get the proper i18n sub-key depending on if this is a standard obj or not
-    # if it is a standard object, we need to say that a copy is published, not the obj itself,
-    # b/c that is not possible for std objs
-    subkey = obj.is_standard? ? 'copy_published' : 'self_published'
-
-    text = tmd("data_integrity.published_warnings.#{subkey}.#{type}")
+    text = tmd("data_integrity.published_warnings.#{type}")
     data_integrity_warning(:published_warning, text)
   end
 
@@ -36,6 +31,6 @@ module DataIntegrityHelper
   def data_integrity_warning(type, text = nil)
     icon = content_tag(:i, '', :class => 'fa fa-exclamation-triangle')
     text ||= tmd("data_integrity.#{type}")
-    content_tag(:div, (icon + content_tag(:div, text)).html_safe, :class => "form-warning alert alert-info #{type}", :id => type)
+    content_tag(:div, icon << content_tag(:div, text), :class => "form-warning alert alert-info #{type}", :id => type)
   end
 end

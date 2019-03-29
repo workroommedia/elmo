@@ -1,0 +1,11 @@
+<%= @form.default_response_name_bind_tag %>
+
+<% @form.sorted_children.each do |node| %>
+  <%= render "forms/odk/binding_node", node: node, parent: nil, xpath_prefix: "/data" %>
+<% end %>
+
+<%# Incomplete response question bindings %>
+<% if allow_incomplete? %>
+  <%= @form.ir_question_binding %>
+  <%= @form.ir_code_binding %>
+<% end %>

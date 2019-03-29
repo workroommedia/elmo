@@ -7,15 +7,15 @@ ELMO::Application.configure do
   # and recreated between test runs.  Don't rely on the data there!
   config.cache_classes = true
 
-  # Log error messages when you accidentally call methods on nil.
-  config.whiny_nils = true
+  # Do not eager load code on boot.
+  config.eager_load = false
 
   # Show full error reports and disable caching
   config.consider_all_requests_local       = true
   config.action_controller.perform_caching = false
 
   # Raise exceptions instead of rendering exception templates
-  config.action_dispatch.show_exceptions = true
+  config.action_dispatch.show_exceptions = false
 
   # Disable request forgery protection in test environment
   config.action_controller.allow_forgery_protection    = false
@@ -33,10 +33,21 @@ ELMO::Application.configure do
   # Print deprecation notices to the stderr
   config.active_support.deprecation = :stderr
 
-  # Raise exception on mass assignment protection for Active Record models
-  config.active_record.mass_assignment_sanitizer = :strict
-
   # Configure static asset server for tests with Cache-Control for performance
-  config.serve_static_assets = true
-  config.static_cache_control = "public, max-age=3600"
+  config.public_file_server.enabled = true
+  config.public_file_server.headers = { 'Cache-Control' => 'public, max-age=3600' }
+
+  # Raises error for missing translations
+  config.action_view.raise_on_missing_translations = false
+
+  # Sorted order for test cases which are executed.
+  config.active_support.test_order = :sorted
+
+  # Use a lower ODK Collect request limit for tests
+  configatron.direct_auth_request_limit = 5
+
+  # Enable rack-attack middleware for protecting against brute-force login attempts,
+  # but disable it until needed.
+  config.middleware.use Rack::Attack
+  Rack::Attack.disable!
 end

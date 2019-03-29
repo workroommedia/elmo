@@ -1,6 +1,6 @@
 <div id="instructions">
-  <h1><%= configatron.site_name %> <%= t("user.login_instructions.title") %></h1>
-  <p><%= t("user.login_instructions.welcome", :site => configatron.site_name) %></p>
+  <h1><%= Settings.site_name %> <%= t("user.login_instructions.title") %></h1>
+  <p><%= t("user.login_instructions.welcome", site: Settings.site_name) %></p>
 
   <table class="form">
     <tr>
@@ -9,15 +9,32 @@
     </tr>
     <tr>
       <td class="name"><%= t("user.login_instructions.site_url") %></td>
-      <td class="value">https://<%= request.host_with_port %></td>
-    </tr>
+      <td class="value"><%= @site_url %></td>
     <tr>
       <td class="name"><%= User.human_attribute_name("login") %></td>
       <td class="value"><%= user.login %></td>
     </tr>
     <tr>
       <td class="name"><%= User.human_attribute_name("password") %></td>
-      <td class="value"><%= password %></td>
+      <td class="value">
+        <%= render("masked_value", value: password) %>
+      </td>
+    </tr>
+    <tr>
+      <td class="name"><%= User.human_attribute_name("sms_auth_code") %></td>
+      <td class="value">
+        <%= render("masked_value", value: user.sms_auth_code) %>
+      </td>
+    </tr>
+    <% unless admin_mode? %>
+      <tr>
+        <td class="name"><%= t("activerecord.models.mission.one") %></td>
+        <td class="value"><%= "#{@current_mission.name}" %></td>
+      </tr>
+    <% end %>
+    <tr>
+      <td class="name"><%= t("user.login_instructions.qr_code") %></td>
+      <td class="value qrcode"><%= raw @config_qr.as_html %></td>
     </tr>
   </table>
 
@@ -25,3 +42,9 @@
     <p><%= para %></p>
   <% end %>
 </div>
+
+<%= javascript_doc_ready do %>
+  new ELMO.Views.UserLoginInstructionsView({
+    el: $('#instructions')
+  })
+<% end %>

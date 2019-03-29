@@ -1,218 +1,335 @@
-class ResponsesController < ApplicationController
-  include CsvRenderable
+# frozen_string_literal: true
 
-  # need to load with associations for show and edit
-  before_filter :load_with_associations, :only => [:show, :edit]
+class ResponsesController < ApplicationController
+  PER_PAGE = 20
+
+  include BatchProcessable
+  include OdkHeaderable
+  include ResponseIndexable
+  include CsvRenderable
+  include OperationQueueable
+  include Searchable
+
+  before_action :fix_nil_time_values, only: %i[update create]
 
   # authorization via CanCan
-  load_and_authorize_resource
+  load_and_authorize_resource find_by: :shortcode
+  before_action :assign_form, only: [:new]
 
-  before_filter :mark_response_as_checked_out, :only => [:edit]
+  before_action :mark_response_as_checked_out, only: [:edit]
 
   def index
+    @responses = Response.accessible_by(current_ability)
+
     # handle different formats
     respond_to do |format|
       # html is the normal index page
       format.html do
         # apply search and pagination
         params[:page] ||= 1
+        @responses = @responses.with_basic_assoc.order(created_at: :desc)
+        @responses = @responses.includes(user: :assignments) # Needed for permission check
+        @responses = @responses.paginate(page: params[:page], per_page: PER_PAGE)
 
-        # paginate
-        @responses = @responses.paginate(:page => params[:page], :per_page => 20)
-
-        # include answers so we can show key questions
-        @responses = @responses.includes(:answers)
-
-        # do search, including excerpts, if applicable
-        if params[:search].present?
-          begin
-            @responses = Response.do_search(@responses, params[:search], {:mission => current_mission}, :include_excerpts => true)
-          rescue Search::ParseError
-            flash.now[:error] = $!.to_s
-            @search_error = true
-          rescue ThinkingSphinx::SphinxError
-            # format sphinx message a little more nicely
-            sphinx_msg = $!.to_s.gsub(/index .+?:\s+/, '')
-            flash.now[:error] = sphinx_msg
-            @search_error = true
-          end
+        # Redirect immediately for exact shortcode searches.
+        if params[:search].present? && (resp = Response.find_by(shortcode: params[:search].downcase))
+          redirect_to(can?(:update, resp) ? edit_response_path(resp) : response_path(resp))
         end
 
+        @responses = apply_search_if_given(Response, @responses, include_excerpts: true)
+
+        decorate_responses
+
+        @selected_ids = params[:sel]
+        @selected_all_pages = params[:select_all_pages]
+
         # render just the table if this is an ajax request
-        render(:partial => "table_only", :locals => {:responses => @responses}) if request.xhr?
+        render(partial: "table_only", locals: {responses: @responses}) if request.xhr?
       end
 
       # csv output is for exporting responses
       format.csv do
-        # do search, excluding excerpts
-        if params[:search].present?
-          begin
-            @responses = Response.do_search(@responses, params[:search], {:mission => current_mission}, :include_excerpts => false)
-          rescue Search::ParseError
-            flash.now[:error] = $!.to_s
-            return
-          end
-        end
+        authorize!(:export, Response)
 
-        # get the response, for export, but not paginated
-        @responses = Response.for_export(@responses)
-
-        # render the csv
-        render_csv("elmo-#{current_mission.compact_name}-responses-#{Time.zone.now.to_s(:filename_datetime)}")
+        enqueue_csv_export
+        prep_operation_queued_flash(:response_csv_export)
+        redirect_to(responses_path)
       end
     end
   end
 
   def show
-    # if there is a search param, we try to load the response via the do_search mechanism so that we get highlighted excerpts
+    # if there is a search param, we try to load the response via the do_search mechanism
+    # so that we get highlighted excerpts
     if params[:search]
       # we pass a relation matching only one respoonse, so there should be at most one match
-      matches = Response.do_search(Response.where(:id => @response.id), params[:search], {:mission => current_mission},
-        :include_excerpts => true, :dont_truncate_excerpts => true)
+      matches = Response.do_search(Response.where(id: @response.id), params[:search],
+        {mission: current_mission}, include_excerpts: true, dont_truncate_excerpts: true)
 
       # if we get a match, then we use that object instead, since it contains excerpts
       @response = matches.first if matches.first
     end
+
     prepare_and_render_form
   end
 
   def new
-    # get the form specified in the params and error if it's not there
-    begin
-      @response.form = Form.with_questionings.find(params[:form_id])
-    rescue ActiveRecord::RecordNotFound
-      return redirect_to(index_url_with_page_num)
-    end
-
+    setup_condition_computer
+    Results::BlankResponseTreeBuilder.new(@response).build
     # render the form template
     prepare_and_render_form
   end
 
   def edit
-    flash.now[:notice] = "#{t("response.checked_out")} #{@response.checked_out_by_name}" if @response.checked_out_by_others?(current_user)
+    if @response.checked_out_by_others?(current_user)
+      flash.now[:notice] = "#{t('response.checked_out')} #{@response.checked_out_by_name}"
+    end
     prepare_and_render_form
   end
 
   def create
-
-    # if this is a non-web submission
-    if request.format == Mime::XML
-
-      # if the method is HEAD or GET just render the 'no content' status since that's what odk wants!
-      if %w(HEAD GET).include?(request.method)
-        render(:nothing => true, :status => 204)
-
-      # otherwise, we should process the submission
-      else
-        begin
-          @response.user_id = current_user.id
-
-          # If it looks like a J2ME submission, process accordingly
-          if params[:data] && params[:data][:'xmlns:jrm'] == 'http://dev.commcarehq.org/jr/xforms'
-            @response.populate_from_j2me(params[:data])
-
-          # Otherwise treat it like an ODK submission
-          else
-            upfile = params[:xml_submission_file]
-
-            unless upfile
-              render_xml_submission_failure('No XML file attached.', 422)
-              return false
-            end
-
-            xml = upfile.read
-            Rails.logger.info("----------\nXML submission:\n#{xml}\n----------")
-            @response.populate_from_odk(xml)
-          end
-
-          # ensure response's user can submit to the form
-          authorize!(:submit_to, @response.form)
-
-          # save without validating, as we have no way to present validation errors to user,
-          # and submitting apps already do validation
-          @response.save(:validate => false)
-
-          render(:nothing => true, :status => 201)
-
-        rescue CanCan::AccessDenied
-          render_xml_submission_failure($!, 403)
-
-        rescue ActiveRecord::RecordNotFound
-          render_xml_submission_failure($!, 404)
-
-        rescue FormVersionError
-          # 426 - upgrade needed
-          # We use this because ODK can't display custom failure messages so this provides a little more info.
-          render_xml_submission_failure($!, 426)
-
-        rescue SubmissionError
-          render_xml_submission_failure($!, 422)
-        end
-      end
-
-    # for HTML format just use the method below
+    if request.format == Mime[:xml]
+      handle_odk_submission
     else
       web_create_or_update
     end
   end
 
   def update
-    @response.assign_attributes(params[:response])
+    @response.assign_attributes(response_params)
     web_create_or_update
+  end
+
+  def bulk_destroy
+    @responses = restrict_by_search_and_ability_and_selection(@responses, Response,
+      search_options: {include_excerpts: false})
+    result = ResponseDestroyer.new(scope: @responses, ability: current_ability).destroy!
+    flash[:success] = t("response.bulk_destroy_deleted", count: result[:destroyed])
+    redirect_to(responses_path)
   end
 
   def destroy
     destroy_and_handle_errors(@response)
-    redirect_to(index_url_with_page_num)
+    redirect_to(index_url_with_context)
+  end
+
+  def possible_submitters
+    # get the users to which this response can be assigned
+    # which is the users in this mission plus the submitter of this response
+    @possible_submitters = User.assigned_to_or_submitter(current_mission, @response).by_name
+
+    # do search if applicable
+    if params[:search].present?
+      begin
+        @possible_submitters = User.do_search(@possible_submitters, params[:search], mission: current_mission)
+      rescue Search::ParseError => e
+        flash.now[:error] = e.to_s
+        @search_error = true
+      end
+    end
+
+    @possible_submitters = @possible_submitters.paginate(page: params[:page], per_page: 20)
+
+    render(json: {
+      possible_submitters: ActiveModel::ArraySerializer.new(@possible_submitters),
+      more: @possible_submitters.next_page.present?
+    }, select2: true)
+  end
+
+  def possible_users
+    search_mode = params[:search_mode] || "submitters"
+
+    case search_mode
+    when "submitters"
+      @possible_users = User.assigned_to_or_submitter(current_mission, @response).by_name
+    when "reviewers"
+      @possible_users = User.with_roles(current_mission, %w[coordinator staffer reviewer]).by_name
+    end
+
+    # do search if applicable
+    if params[:search].present?
+      begin
+        @possible_users = User.do_search(@possible_users, params[:search], mission: current_mission)
+      rescue Search::ParseError => e
+        flash.now[:error] = e.to_s
+        @search_error = true
+      end
+    end
+
+    @possible_users = @possible_users.paginate(page: params[:page], per_page: 20)
+
+    render(json: {
+      possible_users: ActiveModel::ArraySerializer.new(@possible_users),
+      more: @possible_users.next_page.present?
+    }, select2: true)
   end
 
   private
-    # loads the response with its associations
-    def load_with_associations
-      @response = Response.with_associations.find(params[:id])
+
+  def setup_condition_computer
+    @condition_computer = Forms::ConditionComputer.new(@response.form)
+  end
+
+  # loads the response with its associations
+  def load_with_associations
+    @response = Response.with_basic_assoc.friendly.find(params[:id])
+  end
+
+  # when editing a response, set timestamp to show it is being worked on
+  def mark_response_as_checked_out
+    @response.check_out!(current_user)
+  end
+
+  # handles creating/updating for the web form
+  def web_create_or_update
+    check_form_exists_in_mission
+
+    # set source/modifier to web
+    @response.source = "web" if params[:action] == "create"
+    @response.modifier = "web"
+
+    # check for "update and mark as reviewed"
+    @response.reviewed = true if params[:commit_and_mark_reviewed]
+    @response.check_in if params[:action] == "update"
+
+    if can?(:modify_answers, @response)
+      parser = Results::WebResponseParser.new(@response)
+      parser.parse(params.require(:response))
     end
 
-    # when editing a response, set timestamp to show it is being worked on
-    def mark_response_as_checked_out
-      @response.check_out!(current_user)
+    # try to save
+    begin
+      @response.save!
+      set_success_and_redirect(@response)
+    rescue ActiveRecord::RecordInvalid
+      flash.now[:error] = I18n.t("activerecord.errors.models.response.general")
+      prepare_and_render_form
     end
+  end
 
-    # handles creating/updating for the web form
-    def web_create_or_update
-      # set source/modifier to web
-      @response.source = "web" if params[:action] == "create"
-      @response.modifier = "web"
+  def handle_odk_submission
+    return render_xml_submission_failure("No XML file attached.", 422) unless params[:xml_submission_file]
 
-      # check for "update and mark as reviewed"
-      @response.reviewed = true if params[:commit_and_mark_reviewed]
+    # Store main XML file for debugging purposes.
+    SavedUpload.create!(file: params[:xml_submission_file])
 
-      if params[:action] == "update"
-        @response.check_in
+    begin
+      @response.user_id = current_user.id
+      @response = odk_response_parser.populate_response
+      authorize!(:submit_to, @response.form)
+      @response.save(validate: false)
+      render(body: nil, status: :created)
+    rescue CanCan::AccessDenied => e
+      render_xml_submission_failure(e, 403)
+    rescue ActiveRecord::RecordNotFound => e
+      render_xml_submission_failure(e, 404)
+    rescue FormVersionError => e
+      # 426 - upgrade needed
+      # We use this because ODK can't display custom failure messages so this provides a little more info.
+      render_xml_submission_failure(e, 426)
+    rescue SubmissionError => e
+      render_xml_submission_failure(e, 422)
+    end
+  end
+
+  def odk_response_parser
+    Odk::ResponseParser.new(
+      response: @response,
+      files: open_file_params,
+      awaiting_media: odk_awaiting_media?
+    )
+  end
+
+  # Returns a hash of param keys to open tempfiles for uploaded file parameters.
+  def open_file_params
+    file_params = params.select { |_k, v| v.is_a?(ActionDispatch::Http::UploadedFile) }.to_unsafe_h
+    file_params.map { |k, v| [k, v.tempfile.open] }.to_h.with_indifferent_access
+  end
+
+  # Returns whether the ODK submission request params indicate that not all attachments are included.
+  def odk_awaiting_media?
+    params["*isIncomplete*"] == "yes"
+  end
+
+  # prepares objects for and renders the form template
+  def prepare_and_render_form
+    @context = Results::ResponseFormContext.new(
+      read_only: action_name == "show" || cannot?(:modify_answers, @response)
+    )
+
+    # The blank response is used for rendering placeholders for repeat groups
+    @blank_response = Response.new(form: @response.form)
+    Results::BlankResponseTreeBuilder.new(@blank_response).build
+
+    render(:form)
+  end
+
+  def render_xml_submission_failure(exception, code)
+    Rails.logger.info("XML submission failed: '#{exception}'")
+    render(body: nil, status: code)
+  end
+
+  def alias_response
+    # CanCanCan loads resource into @_response
+    @response = @_response
+  end
+
+  # get the form specified in the params and error if it's not there
+  def assign_form
+    @response.form = Form.find(params[:form_id])
+    check_form_exists_in_mission
+  rescue ActiveRecord::RecordNotFound
+    redirect_to(index_url_with_context)
+  end
+
+  def set_read_only
+    @read_only = case action_name
+                 when "show"
+                   true
+                 else
+                   cannot?(:modify_answers, @response)
+                 end
+  end
+
+  def response_params
+    if params[:response]
+      to_permit = %i[form_id user_id incomplete]
+
+      to_permit << %i[reviewed reviewer_notes reviewer_id] if @response.present? && can?(:review, @response)
+
+      params.require(:response).permit(to_permit)
+    end
+  end
+
+  def check_form_exists_in_mission
+    if @response.form.mission_id != current_mission.id
+      @error = CanCan::AccessDenied.new("Form does not exist in this mission.", :create, :response)
+      raise @error
+    end
+  end
+
+  # Rails seems to have a bug wherein if a time_select field is left blank,
+  # the value that gets stored is not nil, but 00:00:00.
+  # This seems to be because the date is passed in as 0001-01-01 so it doesn't look like a nil.
+  # So here we correct it by setting the incoming parameters in such a situation to all blanks.
+  def fix_nil_time_values
+    if params[:response] && params[:response][:answers_attributes]
+      params[:response][:answers_attributes].each do |key, attribs|
+        if attribs["time_value(4i)"].blank? && attribs["time_value(5i)"].blank?
+          %w[1 2 3].each { |i| params[:response][:answers_attributes][key]["time_value(#{i}i)"] = "" }
+        end
       end
-
-      # try to save
-      begin
-        @response.save!
-        set_success_and_redirect(@response)
-      rescue ActiveRecord::RecordInvalid
-        flash.now[:error] = I18n.t('activerecord.errors.models.response.general')
-        prepare_and_render_form
-      end
     end
+  end
 
-    # prepares objects for and renders the form template
-    def prepare_and_render_form
-      # get the users to which this response can be assigned
-      # which is the users in this mission plus admins
-      # (we need to include admins because they can submit forms to any mission)
-      @possible_submitters = User.assigned_to_or_admin(current_mission).by_name
-
-      # render the form
-      render(:form)
-    end
-
-    def render_xml_submission_failure(exception, code)
-      Rails.logger.info("XML submission failed: '#{exception.to_s}'")
-      render(:nothing => true, :status => code)
-    end
+  def enqueue_csv_export
+    operation = Operation.new(
+      creator: current_user,
+      mission: current_mission,
+      job_class: ResponseCsvExportOperationJob,
+      details: t("operation.details.response_csv_export"),
+      job_params: {search: params[:search]}
+    )
+    operation.enqueue
+  end
 end

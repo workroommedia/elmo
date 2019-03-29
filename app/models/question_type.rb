@@ -1,80 +1,130 @@
 class QuestionType
+  AVAILABLE_PROPERTIES = %w[printable smsable textual headerable defaultable numeric
+                            multimedia temporal has_options has_timezone refable].freeze
+  attr_reader :name, :odk_name, :properties
 
-  attr_reader :name, :odk_name, :odk_tag, :properties
-
-  @@attributes = [
-    {:name => "text", :odk_name => "string", :odk_tag => "input", :properties => %w(form_printable smsable textual headerable)},
-    {:name => "long_text", :odk_name => "string", :odk_tag => "input", :properties => %w(form_printable smsable textual)},
-    {:name => "integer", :odk_name => "int", :odk_tag => "input", :properties => %w(form_printable smsable numeric headerable)},
-    {:name => "decimal", :odk_name => "decimal", :odk_tag => "input", :properties => %w(form_printable smsable numeric headerable)},
-    {:name => "location", :odk_name => "geopoint", :odk_tag => "input", :properties => %w()},
-    {:name => "select_one", :odk_name => "select1", :odk_tag => "select1", :properties => %w(form_printable has_options smsable headerable)},
-    {:name => "select_multiple", :odk_name => "select", :odk_tag => "select", :properties => %w(form_printable has_options smsable headerable)},
-    {:name => "datetime", :odk_name => "dateTime", :odk_tag => "input", :properties => %w(form_printable temporal has_timezone smsable headerable)},
-    {:name => "date", :odk_name => "date", :odk_tag => "input", :properties => %w(form_printable temporal smsable headerable)},
-    {:name => "time", :odk_name => "time", :odk_tag => "input", :properties => %w(form_printable temporal smsable headerable)}
-  ]
+  @attributes = [{
+    name: "text",
+    odk_name: "string",
+    properties: %w[printable smsable textual headerable defaultable refable]
+  }, {
+    name: "long_text",
+    odk_name: "string",
+    properties: %w[printable smsable textual refable defaultable]
+  }, {
+    name: "barcode",
+    odk_name: "barcode",
+    properties: %w[printable smsable textual refable]
+  }, {
+    name: "integer",
+    odk_name: "int",
+    properties: %w[printable smsable numeric headerable refable defaultable]
+  }, {
+    name: "counter",
+    odk_name: "int",
+    properties: %w[printable smsable numeric headerable refable defaultable]
+  }, {
+    name: "decimal",
+    odk_name: "decimal",
+    properties: %w[printable smsable numeric headerable refable defaultable]
+  }, {
+    name: "location",
+    odk_name: "geopoint",
+    properties: %w[]
+  }, {
+    name: "select_one",
+    odk_name: "select1",
+    properties: %w[printable has_options smsable headerable refable]
+  }, {
+    name: "select_multiple",
+    odk_name: "select",
+    properties: %w[printable has_options smsable headerable refable]
+  }, {
+    name: "datetime",
+    odk_name: "dateTime",
+    properties: %w[printable temporal has_timezone smsable headerable refable defaultable]
+  }, {
+    name: "date",
+    odk_name: "date",
+    properties: %w[printable temporal smsable headerable refable defaultable]
+  }, {
+    name: "time",
+    odk_name: "time",
+    properties: %w[printable temporal smsable headerable refable defaultable]
+  }, {
+    name: "image",
+    odk_name: "binary",
+    properties: %w[multimedia]
+  }, {
+    name: "annotated_image",
+    odk_name: "binary",
+    properties: %w[multimedia]
+  }, {
+    name: "signature",
+    odk_name: "binary",
+    properties: %w[multimedia printable]
+  }, {
+    name: "sketch",
+    odk_name: "binary",
+    properties: %w[multimedia printable]
+  }, {
+    name: "audio",
+    odk_name: "binary",
+    properties: %w[multimedia]
+  }, {
+    name: "video",
+    odk_name: "binary",
+    properties: %w[multimedia]
+  }]
 
   # looks up a question type by name
   def self.[](name)
     # build and index the objects if necessary
-    @@by_name ||= all.index_by(&:name)
+    @by_name ||= all.index_by(&:name)
 
     # return the requested object
-    @@by_name[name]
+    @by_name[name.to_s]
   end
 
   # returns all question types
   def self.all
-    @@all ||= @@attributes.map{|a| new(a)}
+    @all ||= @attributes.map { |a| new(a) }
+  end
+
+  def self.with_property(property)
+    all.select(&:"#{property}?")
   end
 
   def initialize(attribs)
-    attribs.each{|k,v| instance_variable_set("@#{k}", v)}
+    attribs.each { |k, v| instance_variable_set("@#{k}", v) }
   end
 
   def human_name
-    name.gsub('_', '-')
+    name.tr("_", "-")
   end
 
-  # returns whether this is a numeric type
-  def numeric?
-    properties.include?("numeric")
+  # Defines methods for checking whether this type has a certain property
+  # for example:
+  #  def numeric?
+  #    properties.include?("numeric")
+  #  end
+  AVAILABLE_PROPERTIES.each do |property|
+    define_method "#{property}?" do
+      properties.include?(property)
+    end
   end
 
-  # returns whether this is an SMSable type
-  def smsable?
-    properties.include?("smsable")
+  # Defines boolean methods for checking type name.
+  @attributes.each do |attrib|
+    define_method "#{attrib[:name]}?" do
+      name == attrib[:name]
+    end
   end
 
-  # returns whether this question type makes sense to be printable on a form
-  def form_printable?
-    properties.include?("form_printable")
-  end
-  alias_method :printable?, :form_printable?
-
-  # returns whether this question type has options
-  def has_options?
-    properties.include?("has_options")
-  end
-
-  # returns whether this type has a timezone
-  def has_timezone?
-    properties.include?("has_timezone")
-  end
-
-  # returns whether this type is temporal
-  def temporal?
-    properties.include?("temporal")
-  end
-
-  # returns whether this is a textual type
-  def textual?
-    properties.include?("textual")
-  end
-
-  # whether values from this question type is suitable for a table header
-  def headerable?
-    properties.include?("headerable")
+  def media_type
+    case name
+    when "image", "annotated_image", "signature", "sketch" then "image"
+    when "audio", "video" then name
+    end
   end
 end
